@@ -1,0 +1,197 @@
+{
+	"info": {
+		"_postman_id": "e2b14f33-477c-4999-9f6e-64446fa5695d",
+		"name": "web3learning",
+		"schema": "https://schema.getpostman.com/json/collection/v2.0.0/collection.json",
+		"_exporter_id": "11428899"
+	},
+	"item": [
+		{
+			"name": "http://localhost:8080/api/auth/register",
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"username\" : \"张三\",\r\n    \"password\" : \"zhangsan$password\",\r\n    \"email\" : \"zhangsan@163.com\"\r\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": "http://localhost:8080/api/auth/register"
+			},
+			"response": []
+		},
+		{
+			"name": "http://localhost:8080/api/auth/login",
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"username\" : \"张三\",\r\n    \"password\" : \"zhangsan$password\"\r\n}"
+				},
+				"url": "http://localhost:8080/api/auth/login"
+			},
+			"response": []
+		},
+		{
+			"name": "http://localhost:8080/api/posts",
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					},
+					{
+						"key": "Authorization",
+						"value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJleHAiOjE3NTY4ODk5NjksImlhdCI6MTc1NjgwMzU2OX0.De0VgbCtaT6LVc_LePSOBeueJqaBYeDvrWuAui3eCqo",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"title\": \"My First Post\",\r\n    \"content\": \"This is the content of my first post.\"\r\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": "http://localhost:8080/api/posts"
+			},
+			"response": []
+		},
+		{
+			"name": "http://localhost:8080/api/posts",
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "GET",
+				"header": [],
+				"url": "http://localhost:8080/api/posts"
+			},
+			"response": []
+		},
+		{
+			"name": "http://localhost:8080/api/posts/1",
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "GET",
+				"header": [],
+				"url": "http://localhost:8080/api/posts/1"
+			},
+			"response": []
+		},
+		{
+			"name": "http://localhost:8080/api/posts/1",
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "PUT",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJleHAiOjE3NTY4OTU5NzEsImlhdCI6MTc1NjgwOTU3MX0.0ILI-ueLiALY7LFduqi68jevPcTS8anoUizVbxpE8mg",
+						"type": "text"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"title\": \"Update Title\",\r\n    \"content\": \"Update content.\"\r\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": "http://localhost:8080/api/posts/1"
+			},
+			"response": []
+		},
+		{
+			"name": "http://localhost:8080/api/posts/1/comments",
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "POST",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJleHAiOjE3NTY4OTU5NzEsImlhdCI6MTc1NjgwOTU3MX0.0ILI-ueLiALY7LFduqi68jevPcTS8anoUizVbxpE8mg",
+						"type": "text"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"content\": \"This is a comment\"\r\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": "http://localhost:8080/api/posts/1/comments"
+			},
+			"response": []
+		},
+		{
+			"name": "http://localhost:8080/api/posts/1/comments",
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "GET",
+				"header": [],
+				"url": "http://localhost:8080/api/posts/1/comments"
+			},
+			"response": []
+		},
+		{
+			"name": "http://localhost:8080/api/posts/1",
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "DELETE",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJleHAiOjE3NTY4OTU5NzEsImlhdCI6MTc1NjgwOTU3MX0.0ILI-ueLiALY7LFduqi68jevPcTS8anoUizVbxpE8mg",
+						"type": "text"
+					}
+				],
+				"url": "http://localhost:8080/api/posts/1"
+			},
+			"response": []
+		}
+	]
+}
