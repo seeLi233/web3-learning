@@ -48,7 +48,7 @@ Git
 
 安装步骤
 1. 克隆项目
-git clone 
+git clone https://github.com/seeLi233/web3-learning/tree/main/task-4
 cd blog-backend
 2. 配置环境变量
 复制环境变量示例文件：
@@ -195,3 +195,5 @@ json
 
 删除文章: DELETE /api/posts/1 (使用 token)
 ===========================================================================
+
+测试用例已导出到 web3learning.postman_collection.json 文件中，在 postman 中导入即可
