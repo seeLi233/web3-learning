@@ -1,0 +1,14 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Hardhat 测试调试",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["hardhat", "test", "test-merge-sorted-arrays.js"],
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"]
+    }
+  ]
+}
