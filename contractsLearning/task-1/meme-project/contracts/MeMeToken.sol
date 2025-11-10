@@ -106,13 +106,7 @@ contract MeMeToken is ERC20, Ownable {
             msg.sender, // LP 代币接受地址
             deadline
         );
-
-        // 3.退还多余的本代币 (如果有)
-        uint256 remainingTokens = tokenAmount - tokenAdded;
-        if(remainingTokens > 0) {
-            _transfer(address(this), msg.sender, remainingTokens);
-        }
-
+        
         emit LiquidityAdded(msg.sender, tokenAdded, wethAdded, lpReceived);
         return lpReceived;
     }
