@@ -1,0 +1,6 @@
+{
+  "solidity.hardhatConfigPath": "hardhat.config.ts",
+  "solidity.packageDefaultDependenciesDirectory": "node_modules",
+  "solidity.packageDefaultDependenciesContractsDirectory": "",
+  "solidity.enabledAsYouTypeCompilation": true
+}
