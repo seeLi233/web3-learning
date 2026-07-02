@@ -7,6 +7,13 @@ export default defineConfig({
     profiles: {
       default: {
         version: "0.8.28",
+        settings: {
+          optimizer: {
+            enabled: true,
+            runs: 1,  // 工厂合约不频繁调用，最小化部署字节码
+          },
+          viaIR: true,
+        },
       },
       production: {
         version: "0.8.28",
@@ -20,6 +27,16 @@ export default defineConfig({
     },
   },
   networks: {
+    default: {
+      type: "edr-simulated",
+      chainType: "l1",
+      allowUnlimitedContractSize: true,
+    },
+    hardhat: {
+      type: "edr-simulated",
+      chainType: "l1",
+      allowUnlimitedContractSize: true,
+    },
     hardhatMainnet: {
       type: "edr-simulated",
       chainType: "l1",

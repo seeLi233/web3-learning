@@ -582,4 +582,116 @@ describe("DeFiToken", function() {
             expect(await token.CLOCK_MODE()).to.equal("mode=timestamp");
         });
     });
+
+    // ==================== Gas 分析测试（Day 13 新增）========================
+    describe("Gas Analysis", function() {
+        let gasReport: Record<string, { min: bigint; max: bigint; total: bigint; count: number }> = {};
+
+         // 辅助函数：记录 gas 消耗
+        async function measureGas(label: string, txPromise: Promise<any>) {
+            const tx = await txPromise;
+            const receipt = await tx.wait();
+            const gasUsed = receipt.gasUsed;
+
+            if (!gasReport[label]) {
+                gasReport[label] = { min: gasUsed, max: gasUsed, total: 0n, count: 0 };
+            }
+
+            const record = gasReport[label];
+            if (gasUsed < record.min) record.min = gasUsed;
+            if (gasUsed > record.max) record.max = gasUsed;
+            record.total += gasUsed;
+            record.count += 1;
+        }
+
+        after(function() {
+            // 所有 Gas 测试结束后打印报告
+            console.log("\n📊 ===== Gas 消耗报告 =====");
+            for (const [label, data] of Object.entries(gasReport)) {
+                const avg = Number(data.total) / data.count;
+                console.log(
+                `  ${label.padEnd(25)} min: ${String(data.min).padStart(7)}  max: ${String(data.max).padStart(7)}  avg: ${Math.round(avg).toString().padStart(7)}  (${data.count} samples)`
+                );
+            }
+        });
+
+        it("transfer — 首次转账 (冷地址) vs 同地址再次转账 (热地址)", async function() {
+            // 冷地址: alice 第一次收到转账
+            await measureGas("transfer (cold - alice)", token.transfer(alice.address, ethers.parseEther("100")));
+            // 热地址: alice 已经收到过转账，storage slot 在 accessed list 中
+            await measureGas("transfer (hot - alice)", token.transfer(alice.address, ethers.parseEther("100")));
+
+            // 验证 gas 差异
+            const coldGas = gasReport["transfer (cold - alice)"]!.min;
+            const hotGas = gasReport["transfer (hot - alice)"]!.min;
+            console.log(`  💡 冷地址 vs 热地址 gas 差异: ${(coldGas - hotGas).toString()} gas`);
+            // 冷地址通常贵 ~2,000 gas（因为 SLOAD 从 2,100 → 100）
+        });
+
+        it("mint gas 消耗", async function() {
+            await measureGas("mint", token.mint(alice.address, ethers.parseEther("1000")));
+        });
+
+        it("approve + transferFrom gas 消耗", async function() {
+            await measureGas("approve", token.approve(alice.address, ethers.parseEther("500")));
+            await measureGas("transferFrom", token.connect(alice).transferFrom(owner.address, bob.address, ethers.parseEther("500")));
+        });
+
+        it("permit gas 消耗（签名的 ecrecover 成本）", async function() {
+            const nonce = await token.nonces(owner.address);
+            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            const chainId = (await ethers.provider.getNetwork()).chainId;
+
+            const domain = {
+                name: TOKEN_NAME,
+                version: "1",
+                chainId: Number(chainId),
+                verifyingContract: await token.getAddress(),
+            };
+
+            const types = {
+                Permit: [
+                    { name: "owner", type: "address" },
+                    { name: "spender", type: "address" },
+                    { name: "value", type: "uint256" },
+                    { name: "nonce", type: "uint256" },
+                    { name: "deadline", type: "uint256" },
+                ],
+            };
+
+            const message = {
+                owner: owner.address,
+                spender: bob.address,
+                value: 100n,
+                nonce: nonce,
+                deadline: deadline,
+            };
+
+            const signature = await owner.signTypedData(domain, types, message);
+            const sig = ethers.Signature.from(signature);
+
+            // 测试 permit 的 gas 成本（包含了 ecrecover）
+            await measureGas("permit", token.connect(bob).permit(
+                owner.address, bob.address, 100n, deadline,
+                sig.v, sig.r, sig.s
+            ));
+        });
+
+        it("delegate gas 消耗", async function() {
+            await measureGas("delegate", token.delegate(alice.address));
+        });
+
+        it("burn gas 消耗", async function() {
+            // 先给 alice 转一些代币用于燃烧
+            const burnAmount = ethers.parseEther("100");
+            await token.transfer(alice.address, burnAmount);
+            await measureGas("burn", token.connect(alice).burn(burnAmount));
+        });
+
+        it("batchTransfer gas — 批量 vs 循环比较", async function() {
+            const recipients = [alice.address, bob.address];
+            const amounts = [ethers.parseEther("10"), ethers.parseEther("10")];
+            await measureGas("batchTransfer (2 addresses)", token.batchTransfer(recipients, amounts));
+        });
+    });
 });
