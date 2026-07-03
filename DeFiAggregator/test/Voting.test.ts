@@ -123,7 +123,7 @@ describe("Voting 合约测试", function () {
         it("未注册选民不能投票", async function () {
             await expect(
                 voting.connect(outsider).vote(0)
-            ).to.be.revertedWithCustomError(voting, "NotChairperson");
+            ).to.be.revertedWithCustomError(voting, "NotRegistered");
         });
 
         it("不能给不存在的提案投票", async function () {

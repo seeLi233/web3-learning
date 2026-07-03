@@ -146,11 +146,11 @@ describe("Auction", function() {
             await auction.connect(alice).bid({value: highBid});
 
             // Bob 出同样价格
-            await expect(auction.connect(alice).bid({value: highBid})).to.be.revertedWithCustomError(auction, "BidTooLow").withArgs(highBid, highBid);
+            await expect(auction.connect(alice).bid({value: highBid})).to.be.revertedWithCustomError(auction, "BidTooLow").withArgs(highBid, highBid + 1n);
 
             // Bob 出更低价格
             const lowBid = ethers.parseEther("0.5");
-            await expect(auction.connect(alice).bid({value: lowBid})).to.be.revertedWithCustomError(auction, "BidTooLow").withArgs(lowBid, highBid);
+            await expect(auction.connect(alice).bid({value: lowBid})).to.be.revertedWithCustomError(auction, "BidTooLow").withArgs(lowBid, highBid + 1n);
         });
 
         it("第一轮出低于 minBid 应该失败", async function () {
@@ -307,7 +307,7 @@ describe("Auction", function() {
 
             await expect(
                 auction.connect(owner).ownerWithdraw()
-            ).to.be.revertedWith("Auction not ended yet");
+            ).to.be.revertedWithCustomError(auction, "AuctionNotEndedYet");
         });
 
         it("无人出价时提款应该失败", async function () {
@@ -316,7 +316,7 @@ describe("Auction", function() {
 
             await expect(
                 auction.connect(owner).ownerWithdraw()
-            ).to.be.revertedWith("No bids placed");
+            ).to.be.revertedWithCustomError(auction, "NoBidsPlaced");
         });
     });
 

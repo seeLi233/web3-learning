@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: SEE LICENSE IN LICENSE
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
 /**
@@ -93,6 +93,7 @@ contract Voting {
     error InvalidProposal(uint256 proposalId);
     error SelfDelegationNotAllowed();
     error CannotVoteTwice();
+    error NotRegistered(address voter);
 
     // ============================================================
     // Modifiers
@@ -182,7 +183,7 @@ contract Voting {
         Voter storage sender = voters[msg.sender];
 
         // 检查是否已注册
-        if (!isRegistered[msg.sender]) revert NotChairperson(msg.sender);
+        if (!isRegistered[msg.sender]) revert NotRegistered(msg.sender);
         // 检查是否已投票
         if (sender.voted) revert AlreadyVoted(msg.sender);
         // 检查提案是否有效
@@ -208,7 +209,7 @@ contract Voting {
         Voter storage sender = voters[msg.sender];
     
         // 检查是否已注册
-        if (!isRegistered[msg.sender]) revert NotChairperson(msg.sender);
+        if (!isRegistered[msg.sender]) revert NotRegistered(msg.sender);
         // 不能委托自己
         if (to == msg.sender) revert SelfDelegationNotAllowed();
         // 不能重复投票
@@ -227,7 +228,7 @@ contract Voting {
         }
 
         // 检查最终委托人是否已注册
-        if (!isRegistered[currentDelegate]) revert NotChairperson(currentDelegate);
+        if (!isRegistered[currentDelegate]) revert NotRegistered(currentDelegate);
     
         // 设置委托
         sender.voted = true;

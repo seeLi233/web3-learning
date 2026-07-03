@@ -29,3 +29,9 @@
 
 # Snapshot cheatcodes output
 /snapshots
+
+/.claude
+
+/.agents
+
+/.vscode

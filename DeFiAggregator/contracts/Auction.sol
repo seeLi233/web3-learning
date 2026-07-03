@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: SEE LICENSE IN LICENSE
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
 contract Auction {
@@ -11,6 +11,10 @@ contract Auction {
     error NotOwner();
     error WithdrawFailed();
     error NothingToWithdraw();
+    error AuctionNotEndedYet();
+    error NoBidsPlaced();
+    error TransferToOwnerFailed();
+    error NotSeller();
 
     // 状态变量
     address public immutable owner;
@@ -59,16 +63,13 @@ contract Auction {
         endTime = block.timestamp + (_durationMinutes * 1 minutes);
     }
 
-    // 出价
+    /// @notice 出价
+    /// @dev 自动退回被超出的前最高出价
     function bid() public payable auctionActive {
-        // 不是第一轮 + 必须高于当前高价
-        if (msg.value <= highestBid) {
-            revert BidTooLow(msg.value, highestBid);
-        }
-
-        // 第一轮 -> 必须 >= 最低出价
-        if (highestBid == 0 && msg.value < minBid) {
-            revert BidTooLow(msg.value, minBid);
+        // 计算本轮最低出价：第一轮用 minBid，之后用最高价 + 1
+        uint256 minRequired = highestBid > 0 ? highestBid + 1 : minBid;
+        if (msg.value < minRequired) {
+            revert BidTooLow(msg.value, minRequired);
         }
 
         // 把前一个最高出价者的钱标记为待退款
@@ -76,7 +77,7 @@ contract Auction {
             pendingReturns[highestBidder] += highestBid;
         }
 
-        // 记录新出价者（去重）
+        // 记录新出价者（可迭代 mapping 模式：去重）
         if (!isBidder[msg.sender]) {
             isBidder[msg.sender] = true;
             allBidders.push(msg.sender);
@@ -111,14 +112,14 @@ contract Auction {
 
     // Owner 提取资金
     function ownerWithdraw() public onlyOwner {
-        require(ended, "Auction not ended yet");
-        require(highestBid > 0, "No bids placed");
+        if (!ended) revert AuctionNotEndedYet();
+        if (highestBid == 0) revert NoBidsPlaced();
 
         uint256 amount = highestBid;
-        highestBid = 0; // 防重入
+        highestBid = 0; // CEI: 先更新状态（防重入）
 
         (bool success, ) = owner.call{value:amount}("");
-        require(success, "Transfer failed");
+        if (!success) revert TransferToOwnerFailed();
     }
 
     // 视图函数

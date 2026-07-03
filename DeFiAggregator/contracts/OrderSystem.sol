@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: SEE LICENSE IN LICENSE
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
 /**
@@ -18,6 +18,7 @@ contract OrderSystem {
     error NotOrderOwner(uint256 orderId, address caller);
     error InvalidStatus(uint256 orderId, uint8 currentStatus, uint8 expectedStatus);
     error EmptyProductName();
+    error ZeroAmount();
 
     // ============ 枚举 + 结构体 ============
      enum OrderStatus {
@@ -94,7 +95,7 @@ contract OrderSystem {
 
     function createOrder(string calldata product)  external payable returns (uint256 orderId) {
         if (bytes(product).length == 0) revert EmptyProductName();
-        if (msg.value == 0) revert("Amount must be greater than 0");
+        if (msg.value == 0) revert ZeroAmount();
 
         orderId = nextOrderId++;
 

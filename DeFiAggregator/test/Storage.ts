@@ -43,7 +43,7 @@ describe("Storage", function() {
 
             it("锁定时不能设置数字", async function () {
             await storage.lock();
-            await expect(storage.setNumber(42)).to.be.revertedWith("Contract is locked");
+            await expect(storage.setNumber(42)).to.be.revertedWithCustomError(storage, "ContractLocked");
         });
     });
 
@@ -85,10 +85,8 @@ describe("Storage", function() {
         });
 
         it("余额不足时应该失败", async function () {
-        const amount = ethers.parseEther("1.0");
-        await expect(storage.connect(user1).withdraw(amount)).to.be.revertedWith(
-            "Insufficient balance"
-        );
+            const amount = ethers.parseEther("1.0");
+            await expect(storage.connect(user1).withdraw(amount)).to.be.revertedWithCustomError(storage, "InsufficientBalance");
         });
     });
 
@@ -103,7 +101,7 @@ describe("Storage", function() {
         });
 
         it("超出索引应该失败", async function () {
-            await expect(storage.getArrayElement(0)).to.be.revertedWith("Index out of bounds");
+            await expect(storage.getArrayElement(0)).to.be.revertedWithCustomError(storage, "IndexOutOfBounds");
         });
     });
 
@@ -116,7 +114,7 @@ describe("Storage", function() {
         it("非 owner 不能添加白名单", async function () {
             await expect(
                 storage.connect(user1).addToWhitelist(user2.address)
-            ).to.be.revertedWith("Not owner");
+            ).to.be.revertedWithCustomError(storage, "Unauthorized");
         });
     });
 });
