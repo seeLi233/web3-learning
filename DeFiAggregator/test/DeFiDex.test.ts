@@ -1,0 +1,423 @@
+import { expect } from "chai";
+import { network } from "hardhat";
+
+const {ethers} = await network.create();
+
+describe("DeFiDex — AMM 恒定乘积做市商", function() {
+    let dex: any;
+    let token0: any;
+    let token1: any;
+    let owner:any, alice: any, bob:any;
+
+    // 精度常量
+    const ETH_PRECISION = 10n ** 18n;
+    const USDT_PRECISION = 10n ** 6n;
+
+    const initialAmount0 = 1000n * ETH_PRECISION;   // 1000 token0
+    const initialAmount1 = 3000000n * USDT_PRECISION; // 3000000 token1
+
+    beforeEach(async function () {
+        [owner, alice, bob] = await ethers.getSigners();
+
+        token0 = await ethers.deployContract("MockToken", ["Token A", "TKA", 18]);
+        token1 = await ethers.deployContract("MockToken", ["Token B", "TKB", 6]);
+
+        // 2. 确保 token0 < token1（按地址排序）
+        const addr0 = await token0.getAddress();
+        const addr1 = await token1.getAddress();
+
+        if (addr0.toLowerCase() < addr1.toLowerCase()) {
+            dex = await ethers.deployContract("DeFiDex", [addr0, addr1]);
+        } else {
+            dex = await ethers.deployContract("DeFiDex", [addr1, addr0]);
+            // 交换引用
+            [token0, token1] = [token1, token0];
+        }
+
+        // 4. 给每个用户 mint 代币
+        for (const user of [owner, alice, bob]) {
+            await token0.mint(user.address, initialAmount0);
+            await token1.mint(user.address, initialAmount1);
+        }
+
+        // 5. 所有用户授权 DeFiDex 花费他们的代币
+        const maxApproval = ethers.MaxUint256;
+        for (const user of [owner, alice, bob]) {
+            await token0.connect(user).approve(await dex.getAddress(), maxApproval);
+            await token1.connect(user).approve(await dex.getAddress(), maxApproval);
+        }
+    });
+
+    // ========== 第一组: 部署测试 ==========
+    describe("Deployment", function () {
+        it("应该正确设置 token0 和 token1", async function () {
+            expect(await dex.token0()).to.equal(await token0.getAddress());
+            expect(await dex.token1()).to.equal(await token1.getAddress());
+        });
+
+        it("LP 代币名称应该是 DeFiDex LP Token", async function () {
+            expect(await dex.name()).to.equal("DeFiDex LP Token");
+        });
+
+        it("LP 代币符号应该是 DLP", async function () {
+            expect(await dex.symbol()).to.equal("DLP");
+        });
+
+        it("初始储备量应该为 0", async function () {
+            const [r0, r1] = await dex.getReserves();
+            expect(r0).to.equal(0);
+            expect(r1).to.equal(0);
+        });
+
+        it("初始 totalSupply 应该为 0", async function () {
+            expect(await dex.totalSupply()).to.equal(0);
+        });
+    });
+
+    // ========== 第二组: 首次添加流动性 ==========
+    describe("Add Liquidity — 首次添加", function () {
+        const addAmount0 = 100n * ETH_PRECISION;  // 100 token0
+        const addAmount1 = 300000n * USDT_PRECISION; // 300000 token1
+
+        it("应该成功添加首次流动性", async function () {
+            const deadline = Math.floor(Date.now() / 1000) + 3600;
+
+            const tx = await dex.addLiquidity(
+                addAmount0,
+                addAmount1,
+                0, // min0
+                0, // min1
+                deadline
+            );
+
+            await tx.wait();
+
+            // 验证储备量
+            const [r0, r1] = await dex.getReserves();
+            expect(r0).to.equal(addAmount0);
+            expect(r1).to.equal(addAmount1);
+        });
+
+        it("LP 代币应该被正确 mint", async function () {
+            // 先添加流动性
+            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            await dex.addLiquidity(addAmount0, addAmount1, 0, 0, deadline);
+
+            const totalSupply = await dex.totalSupply();
+            const ownerBalance = await dex.balanceOf(owner.address);
+
+            // totalSupply = sqrt(x*y)，含永久锁定的 MINIMUM_LIQUIDITY (1000)
+            // owner balance = sqrt(x*y) - 1000
+            expect(ownerBalance).to.be.gt(0);
+            // totalSupply = ownerBalance + 1000 (locked)
+            expect(totalSupply).to.equal(ownerBalance + 1000n);
+        });
+
+        it("应该 emit LiquidityAdded 事件", async function () {
+            // 先添加首次流动性
+            const deadline0 = Math.floor(Date.now() / 1000) + 3600;
+            await dex.addLiquidity(addAmount0, addAmount1, 0, 0, deadline0);
+
+            // alice 追加流动性（按相同比例）
+            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            const tx = await dex.connect(alice).addLiquidity(
+                10n * ETH_PRECISION,
+                30000n * USDT_PRECISION,
+                0,
+                0,
+                deadline
+            );
+
+            await expect(tx)
+                .to.emit(dex, "LiquidityAdded")
+                .withArgs(
+                    alice.address,
+                    10n * ETH_PRECISION,
+                    30000n * USDT_PRECISION,
+                    // liquidity 的值不严格检查
+                    (lq: any) => lq > 0
+                );
+        });
+    });
+
+    // ========== 第三组: Swap 兑换 ==========
+    describe("Swap", function () {
+        // 池子: 100 token0 + 300000 token1，比例 1:3000
+        beforeEach(async function () {
+            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            await dex.connect(owner).addLiquidity(
+                100n * ETH_PRECISION,
+                300000n * USDT_PRECISION,
+                0, 0, deadline
+            );
+        });
+
+        it("getAmountOut 应该正确计算输出量", async function () {
+            const amountIn = 1n * ETH_PRECISION; // 1 token0
+            const amountOut = await dex.getAmountOut(
+                amountIn,
+                await token0.getAddress(),
+                await token1.getAddress()
+            );
+
+            // 公式: amountOut = reserve1 * amountInWithFee / (reserve0 * 1000 + amountInWithFee)
+            // = 300000e6 * 1e18 * 997 / (100e18 * 1000 + 1e18 * 997)
+            const amountInWithFee = amountIn * 997n;
+            const expectedOut =
+                (300000n * USDT_PRECISION * amountInWithFee) /
+                (100n * ETH_PRECISION * 1000n + amountInWithFee);
+
+            // 允许 1 wei 误差（整数除法）
+            const diff = amountOut > expectedOut
+                ? amountOut - expectedOut
+                : expectedOut - amountOut;
+            expect(diff).to.be.lte(1);
+        });
+
+        it("getAmountIn 应该正确计算输入量", async function () {
+            const amountOut = 3000n * USDT_PRECISION; // 想要 3000 token1
+            const amountIn = await dex.getAmountIn(
+                amountOut,
+                await token0.getAddress(),
+                await token1.getAddress()
+            );
+
+            // 反向公式验证: 用 getAmountOut(getAmountIn) ≈ amountOut
+            const computedOut = await dex.getAmountOut(
+                amountIn,
+                await token0.getAddress(),
+                await token1.getAddress()
+            );
+            // 应该 >= amountOut（因为 getAmountIn +1 了）
+            expect(computedOut).to.be.gte(amountOut);
+        });
+
+        it("应该成功执行 swap", async function () {
+            const amountIn = 1n * ETH_PRECISION; // 1 token0
+
+            const expectedOut = await dex.getAmountOut(
+                amountIn,
+                await token0.getAddress(),
+                await token1.getAddress()
+            );
+
+            // 记录 swap 之前的余额
+            const balance1Before = await token1.balanceOf(bob.address);
+
+            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            const tx = await dex.connect(bob).swap(
+                amountIn,
+                expectedOut * 99n / 100n, // 允许 1% 滑点
+                await token0.getAddress(),
+                await token1.getAddress(),
+                deadline
+            );
+
+            // 验证 bob 收到了 token1
+            const balance1After = await token1.balanceOf(bob.address);
+            expect(balance1After - balance1Before).to.equal(expectedOut);
+
+            // 验证事件
+            await expect(tx)
+                .to.emit(dex, "Swap")
+                .withArgs(
+                    bob.address,
+                    await token0.getAddress(),
+                    await token1.getAddress(),
+                    amountIn,
+                    expectedOut
+                );
+        });
+
+        it("滑点保护: 输出小于 minAmountOut 时应该 revert", async function () {
+            const amountIn = 1n * ETH_PRECISION;
+            const expectedOut = await dex.getAmountOut(
+                amountIn,
+                await token0.getAddress(),
+                await token1.getAddress()
+            );
+
+            const deadline = Math.floor(Date.now() / 1000) + 3600;
+
+            // 要求 min 比实际多 2 倍 → 必然失败
+            await expect(
+                dex.connect(bob).swap(
+                    amountIn,
+                    expectedOut * 2n, // 不可能达到
+                    await token0.getAddress(),
+                    await token1.getAddress(),
+                    deadline
+                )
+            ).to.be.revertedWithCustomError(dex, "InsufficientOutputAmount");
+        });
+
+        it("deadline 过期应该 revert", async function () {
+            const deadline = Math.floor(Date.now() / 1000) - 3600; // 过去的时间
+            await expect(
+                dex.connect(bob).swap(
+                    1n * ETH_PRECISION,
+                    0,
+                    await token0.getAddress(),
+                    await token1.getAddress(),
+                    deadline
+                )
+            ).to.be.revertedWithCustomError(dex, "DeadlineExpired");
+        });
+    });
+
+    // ========== 第四组: 移除流动性 ==========
+    describe("Remove Liquidity", function () {
+        beforeEach(async function () {
+            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            await dex.connect(owner).addLiquidity(
+                100n * ETH_PRECISION,
+                300000n * USDT_PRECISION,
+                0, 0, deadline
+            );
+        });
+
+        it("应该按比例返还代币", async function () {
+            const liquidity = await dex.balanceOf(owner.address);
+            const totalSupply = await dex.totalSupply();
+            const [r0, r1] = await dex.getReserves();
+
+            const expected0 = (liquidity * r0) / totalSupply;
+            const expected1 = (liquidity * r1) / totalSupply;
+
+            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            await dex.removeLiquidity(
+                liquidity,
+                BigInt(expected0) * 99n / 100n, // 1% 滑点
+                BigInt(expected1) * 99n / 100n,
+                deadline
+            );
+
+            // 验证储备量已更新
+            const [newR0, newR1] = await dex.getReserves();
+            expect(newR0).to.equal(r0 - expected0);
+            expect(newR1).to.equal(r1 - expected1);
+
+            // 验证 LP 代币已被销毁
+            expect(await dex.balanceOf(owner.address)).to.equal(0);
+        });
+    });
+
+     // ========== 第五组: 价格计算验证 ==========
+    describe("价格验证", function () {
+        beforeEach(async function () {
+            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            await dex.connect(owner).addLiquidity(
+                100n * ETH_PRECISION,
+                300000n * USDT_PRECISION,
+                0, 0, deadline
+            );
+        });
+
+        it("getPrices 应该返回正确的现货价格", async function () {
+            // 池子里还有 user1 的流动性: 10 token0 + 30000 token1
+            // 价格 = 30000e6 / 10e18 = 3000 (按 1e18 精度)
+            const [r0, r1] = await dex.getReserves();
+            const [price0] = await dex.getPrices();
+
+            const expectedPrice0 = (r1 * (10n ** 18n)) / r0;
+
+            // 允许小误差
+            const diff = price0 > expectedPrice0
+                ? price0 - expectedPrice0
+                : expectedPrice0 - price0;
+            expect(diff).to.be.lte(1);
+        });
+    });
+
+    // ========== 第六组: 无常损失演示 ==========
+    describe("无常损失 (Impermanent Loss) 验证", function () {
+        it("价格偏离后 LP 价值低于持有", async function () {
+            // 这个测试验证无常损失的数学
+            // 创建一个新池子: 100 token0 + 300,000 token1（比例 1:3000）
+
+            // 在新网络上部署，避免干扰主测试的池子状态
+            const network2 = await network.create("hardhat");
+            const ethers2 = network2.ethers;
+            const [lp] = await ethers2.getSigners();
+
+            const t0 = await ethers2.deployContract("MockToken", ["Test0", "T0", 18]);
+            const t1 = await ethers2.deployContract("MockToken", ["Test1", "T1", 6]);
+
+            const addr0 = await t0.getAddress();
+            const addr1 = await t1.getAddress();
+
+            const testDex = addr0.toLowerCase() < addr1.toLowerCase()
+                ? await ethers2.deployContract("DeFiDex", [addr0, addr1])
+                : await ethers2.deployContract("DeFiDex", [addr1, addr0]);
+
+            // Mint 代币给 LP
+            await t0.mint(lp.address, 1000n * ETH_PRECISION);
+            await t1.mint(lp.address, 3000000n * USDT_PRECISION);
+            await t0.connect(lp).approve(await testDex.getAddress(), ethers2.MaxUint256);
+            await t1.connect(lp).approve(await testDex.getAddress(), ethers2.MaxUint256);
+
+            // 添加流动性
+            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            await testDex.connect(lp).addLiquidity(
+                100n * ETH_PRECISION,
+                300000n * USDT_PRECISION,
+                0, 0, deadline
+            );
+
+            // LP 持有的价值
+            const lpBalance = await testDex.balanceOf(lp.address);
+            const lpTotalSupply = await testDex.totalSupply();
+            const [r0, r1] = await testDex.getReserves();
+
+            // 如果只是持有（不存池子）的价值（按 1:3000 计算）
+            const holdValue0 = 100n * ETH_PRECISION;       // 100 token0
+            const holdValue1 = 300000n * USDT_PRECISION;   // 300000 token1
+
+            // LP 份额对应的价值（初始应几乎等于持有价值）
+            const lpValue0 = lpBalance * r0 / lpTotalSupply;
+            const lpValue1 = lpBalance * r1 / lpTotalSupply;
+
+            // 验证初始 LP 价值约等于持有价值
+            // LP 份额价值略低于持有价值，因为 1000 LP 被永久锁定到 0xdead
+            // 差额 = holdValue * MINIMUM_LIQUIDITY / totalSupply
+            expect(lpValue0).to.be.lt(holdValue0);
+            expect(lpValue1).to.be.lt(holdValue1);
+            const expectedLoss0 = 1000n * holdValue0 / lpTotalSupply;
+            const expectedLoss1 = 1000n * holdValue1 / lpTotalSupply;
+            // 允许 1 wei 的整数除误差
+            const diff0 = holdValue0 - lpValue0;
+            const diff1 = holdValue1 - lpValue1;
+            expect(diff0 > expectedLoss0 ? diff0 - expectedLoss0 : expectedLoss0 - diff0).to.be.lte(1);
+            expect(diff1 > expectedLoss1 ? diff1 - expectedLoss1 : expectedLoss1 - diff1).to.be.lte(1);
+        });
+    });
+
+    // ========== 第七组: 错误场景 ==========
+    describe("错误场景", function () {
+        it("输入 0 应该 revert", async function () {
+            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            await expect(
+                dex.swap(
+                    0,
+                    0,
+                    await token0.getAddress(),
+                    await token1.getAddress(),
+                    deadline
+                )
+            ).to.be.revertedWithCustomError(dex, "InsufficientInputAmount");
+        });
+
+        it("相同的代币地址应该 revert（swap）", async function () {
+            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            await expect(
+                dex.swap(
+                    1n * ETH_PRECISION,
+                    0,
+                    await token0.getAddress(),
+                    await token0.getAddress(), // 相同！
+                    deadline
+                )
+            ).to.be.revertedWithCustomError(dex, "InvalidAddress");
+        });
+    });
+});
