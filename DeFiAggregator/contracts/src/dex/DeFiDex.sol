@@ -70,6 +70,15 @@ contract DeFiDex is ERC20, Ownable, ReentrancyGuard {
     // 最小流动性（防止粉尘攻击，初始 LP 会被锁一部分）
     uint256 public constant MINIMUM_LIQUIDITY = 1000;
 
+    // ============ 手续费追踪 ============
+    uint256 public accumulatedFee0; // token0 的累积手续费
+    uint256 public accumulatedFee1; // token1 的累积手续费
+
+    // ============ TWAP 预言机 ============
+    uint256 public price0CumulativeLast;    // token0 价格累计 (UQ112x112)
+    uint256 public price1CumulativeLast;    // token1 价格累计
+    uint32 public blockTimestampLast;       // 上次更新时间
+
     // ============ 构造函数 ============
     /// @param _token0 交易对代币 A 的地址
     /// @param _token1 交易对代币 B 的地址
@@ -150,22 +159,30 @@ contract DeFiDex is ERC20, Ownable, ReentrancyGuard {
         // 5. 滑点保护: 实际输出不能小于用户预期的最小值
         if (amountOut < minAmountOut) revert InsufficientOutputAmount();
 
-        // 6. 执行转账（CEI 模式: 先更新状态，再外部调用）
+        // 6. 计算手续费（在更新 reserve 之前计算）
+        uint256 fee = amountIn - (amountIn * FEE_NUMERATOR / FEE_DONOMINATOR);
+
+        // 7. 更新储备量 + 预言机
+        uint256 newReserve0 = reserve0;
+        uint256 newReserve1 = reserve1;
+
         if (isToken0In) {
             reserve0 += amountIn;
             reserve1 -= amountOut;
+            accumulatedFee0 += fee; // 手续费留在池子里
         } else {
             reserve1 += amountIn;
             reserve0 -= amountOut;
+            accumulatedFee1 += fee;
         }
 
-        // 7. 转出代币给用户
+        _update(newReserve0, newReserve1);
+
+        // 8. 转出代币给用户
         IERC20(tokenInAddr).safeTransferFrom(msg.sender, address(this), amountIn);
         IERC20(tokenOutAddr).safeTransfer(msg.sender, amountOut);
 
-        // 8. 检查 k 值不变量（必须 >= 原来的 k，因为手续费会增加 k）
-        // 新 k = reserve0 * reserve1，由于手续费留在了池子里，新 k >= 旧 k
-        // 这里不做严格检查，因为 reserve 已经在步骤 6 更新，而手续费留在池子里
+        // 不需要再检查 k 值 — _update 已经在更新 reserve 后，手续费会增加 k
 
         emit Swap(msg.sender, tokenInAddr, tokenOutAddr, amountIn, amountOut);
     }
@@ -213,6 +230,30 @@ contract DeFiDex is ERC20, Ownable, ReentrancyGuard {
         } else {
             revert InvalidAddress();
         }
+    }
+
+    /// @dev 更新储备量 + 价格累加器（TWAP 预言机）
+    function _update(uint256 _reserve0, uint256 _reserve1) private {
+        // 使用 uint32 因为 block.timestamp 在 2106 年之前不会溢出
+        uint32 blockTimestamp = uint32(block.timestamp % 2 ** 32);
+        uint32 timeElapsed;
+
+        unchecked {
+            // 处理 timestamp 溢出换行（罕见）
+            timeElapsed = blockTimestamp - blockTimestampLast;
+        }
+
+        if (timeElapsed > 0 && reserve0 != 0 && reserve1 != 0) {
+            // ⭐ 价格累加 = 现货价格 × 时间间隔
+            // price0 = reserve1 / reserve0 (1 token0 = ? token1)
+            // 乘以 2**112 精度防止精度丢失（UQ112x112 定点数）
+            price0CumulativeLast += (reserve1 * (2 ** 112) / reserve0) * timeElapsed;
+            price1CumulativeLast += (reserve0 * (2 ** 112) / reserve1) * timeElapsed;
+        }
+
+        blockTimestampLast = blockTimestamp;
+        reserve0 = _reserve0;
+        reserve1 = _reserve1;
     }
 
     // ============ 流动性管理 ============
@@ -292,8 +333,7 @@ contract DeFiDex is ERC20, Ownable, ReentrancyGuard {
             revert InsufficientLiquidity();
 
         // CEI: 先更新储备量
-        reserve0 += amount0;
-        reserve1 += amount1;
+        _update(reserve0 + amount0, reserve1 + amount1);
 
         // mint LP 代币给用户
         _mint(msg.sender, liquidity);
@@ -325,8 +365,7 @@ contract DeFiDex is ERC20, Ownable, ReentrancyGuard {
             revert InsufficientLiquidity();
 
         // CEI: 先更新储备量
-        reserve0 -= amount0;
-        reserve1 -= amount1;
+        _update(reserve0 - amount0, reserve1 - amount1);
 
         // 销毁 LP 代币
         _burn(msg.sender, liquidity);
@@ -336,6 +375,109 @@ contract DeFiDex is ERC20, Ownable, ReentrancyGuard {
         token1.safeTransfer(msg.sender, amount1);
 
         emit LiquidityRemoved(msg.sender, amount0, amount1, liquidity);
+    }
+
+    /// @notice 单边移除流动性 — 销毁 LP 全部换成一种代币
+    /// @param liquidity 要销毁的 LP 数量
+    /// @param tokenOut 想要输出的代币地址
+    /// @param minAmountOut 最小输出数量（滑点保护）
+    /// @param deadline 截止时间
+    /// @return amountOut 实际输出的代币数量
+    function removeLiquiditySingle(uint256 liquidity, address tokenOut, uint256 minAmountOut, uint256 deadline) external nonReentrant returns (uint256 amountOut) {
+        if (block.timestamp > deadline) revert DeadlineExpired();
+        if (liquidity == 0) revert InsufficientLiquidity();
+        if (tokenOut != address(token0) && tokenOut != address(token1))
+            revert InvalidAddress();
+        
+        // Step 1: 计算两种代币的份额
+        uint256 amount0 = (liquidity * reserve0) / totalSupply();
+        uint256 amount1 = (liquidity * reserve1) / totalSupply();
+
+        // Step 2: 销毁 LP 代币 + 更新 reserve
+        _burn(msg.sender, liquidity);
+
+        if (tokenOut == address(token0)) {
+            // Step 3: 把 token1 部分 swap 成 token0
+            // 注意：这里的 swap 在 pool 内部发生，
+            // reserve 在下一步更新之前需要先扣除 amount0 和 amount1
+            uint256 newReserve0 = reserve0 - amount0;
+            uint256 newReserve1 = reserve1 - amount1;
+
+            // 用 amount1 swap token0（在扣除后的池子里换）
+            // swap 公式: amountOut = (reserveOut * amountIn * 997) / (reserveIn * 1000 + amountIn * 997)
+            uint256 swapOut = (newReserve0 * amount0 * FEE_NUMERATOR) / (newReserve1 * FEE_DONOMINATOR + amount1 * FEE_NUMERATOR);
+
+            // ⭐ 修复: 防止 swapOut 超过池子中的 token0 余额
+            if (swapOut > newReserve0) {
+                swapOut = newReserve0;
+            }
+
+            // 总输出 = 你应得的 token0 + swap 换来的 token0
+            amountOut = amount0 + swapOut;
+
+            // 更新 reserve（token1 进了池子，token0 减少了 amount0 + swapOut）
+            _update(newReserve0 - swapOut, newReserve1 + amount1);
+
+            // 更新手续费（swap 部分产生了手续费）
+            uint256 swapFee = amount1 - (amount1 * FEE_NUMERATOR / FEE_DONOMINATOR);
+            accumulatedFee1 += swapFee;
+        } else {
+            // tokenOut == token1: 把 token0 部分 swap 成 token1
+            uint256 newReserve0 = reserve0 - amount0;
+            uint256 newReserve1 = reserve1 - amount1;
+
+            uint256 swapOut = (newReserve1 * amount0 * FEE_NUMERATOR) / (newReserve0 * FEE_DONOMINATOR + amount0 * FEE_NUMERATOR);
+
+            // ⭐ 修复
+            if (swapOut > newReserve1) {
+                swapOut = newReserve1;
+            }
+
+            amountOut = amount1 + swapOut;
+            _update(newReserve0 + amount0, newReserve1 - swapOut);
+
+            uint256 swapFee = amount0 - (amount0 * FEE_NUMERATOR / FEE_DONOMINATOR);
+            accumulatedFee0 += swapFee;
+        }
+
+        // 滑点保护
+        if (amountOut < minAmountOut) revert InsufficientOutputAmount();
+
+        // 转出代币
+        IERC20(tokenOut).safeTransfer(msg.sender, amountOut);
+
+        emit LiquidityRemoved(msg.sender, 
+            tokenOut == address(token0) ? amount0 : amountOut - amount1,
+            tokenOut == address(token1) ? amount1 : amountOut - amount0,
+            liquidity);
+    }
+
+    /// @notice 查询某个地址的 LP 份额信息
+    /// @param account 用户地址
+    /// @return liquidity LP 代币余额
+    /// @return share0 按份额对应的 token0 数量
+    /// @return share1 按份额对应的 token1 数量
+    /// @return sharePercent 份额百分比（精度 1e18）
+    function getLPShare(address account) external view returns (uint256 liquidity, uint256 share0, uint256 share1, uint256 sharePercent) {
+        liquidity = balanceOf(account);
+        uint256 totalLp = totalSupply();
+
+        if (totalLp == 0) return (0, 0, 0, 0);
+
+        share0 = (liquidity * reserve0) / totalLp;
+        share1 = (liquidity * reserve1) / totalLp;
+        sharePercent = (liquidity * 1e18) / totalLp;    // 如 0.25 = 250000000000000000
+    }
+
+    /// @notice 查询一段时间内的 TWAP 价格
+    /// @param priceCumulativeStart 开始时刻的累计价格
+    /// @param priceCumulativeEnd 结束时刻的累计价格
+    /// @param timeElapsed 时间间隔（秒）
+    /// @return twap TWAP 价格（精度 2**112）
+    function computeTWAP(uint256 priceCumulativeStart, uint256 priceCumulativeEnd, uint32 timeElapsed) public pure returns (uint256 twap) {
+        if (timeElapsed == 0) return 0;
+        // TWAP = (priceCumulativeEnd - priceCumulativeStart) / timeElapsed
+        twap = (priceCumulativeEnd - priceCumulativeStart) / timeElapsed;
     }
 
     // ============ 辅助函数 ============
