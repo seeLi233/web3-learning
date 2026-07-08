@@ -162,17 +162,17 @@ contract DeFiDex is ERC20, Ownable, ReentrancyGuard {
         // 6. 计算手续费（在更新 reserve 之前计算）
         uint256 fee = amountIn - (amountIn * FEE_NUMERATOR / FEE_DONOMINATOR);
 
-        // 7. 更新储备量 + 预言机
-        uint256 newReserve0 = reserve0;
-        uint256 newReserve1 = reserve1;
+        // 7. 更新储备量 + 预言机（注意：不能直接修改 reserve，_update 会统一设置）
+        uint256 newReserve0;
+        uint256 newReserve1;
 
         if (isToken0In) {
-            reserve0 += amountIn;
-            reserve1 -= amountOut;
+            newReserve0 = reserve0 + amountIn;
+            newReserve1 = reserve1 - amountOut;
             accumulatedFee0 += fee; // 手续费留在池子里
         } else {
-            reserve1 += amountIn;
-            reserve0 -= amountOut;
+            newReserve0 = reserve0 - amountOut;
+            newReserve1 = reserve1 + amountIn;
             accumulatedFee1 += fee;
         }
 
@@ -405,7 +405,7 @@ contract DeFiDex is ERC20, Ownable, ReentrancyGuard {
 
             // 用 amount1 swap token0（在扣除后的池子里换）
             // swap 公式: amountOut = (reserveOut * amountIn * 997) / (reserveIn * 1000 + amountIn * 997)
-            uint256 swapOut = (newReserve0 * amount0 * FEE_NUMERATOR) / (newReserve1 * FEE_DONOMINATOR + amount1 * FEE_NUMERATOR);
+            uint256 swapOut = (newReserve0 * amount1 * FEE_NUMERATOR) / (newReserve1 * FEE_DONOMINATOR + amount1 * FEE_NUMERATOR);
 
             // ⭐ 修复: 防止 swapOut 超过池子中的 token0 余额
             if (swapOut > newReserve0) {
@@ -478,6 +478,68 @@ contract DeFiDex is ERC20, Ownable, ReentrancyGuard {
         if (timeElapsed == 0) return 0;
         // TWAP = (priceCumulativeEnd - priceCumulativeStart) / timeElapsed
         twap = (priceCumulativeEnd - priceCumulativeStart) / timeElapsed;
+    }
+
+    // ============ TWAP 预言机查询（Day 17 新增）============
+
+    /// @notice 查询 token0 在一段时间内的 TWAP
+    /// @dev 调用者需要自己记录起始时刻的 price0CumulativeLast
+    /// @param priceCumulativeStart 起始时刻的 price0CumulativeLast（需提前存储）
+    /// @param priceCumulativeEnd 结束时刻的 price0CumulativeLast（当前值）
+    /// @param timeElapsed 时间间隔（秒）
+    /// @return twap token0 的 TWAP 价格（UQ112x112 格式，即乘以 2^112 的定点数）
+    /// @return priceRaw token0 的现货价格（乘以 1e18，方便前端展示）
+    function queryTWAP0(uint256 priceCumulativeStart, uint256 priceCumulativeEnd, uint32 timeElapsed) public view returns (uint256 twap, uint256 priceRaw) {
+        if (timeElapsed == 0 || reserve0 == 0 || reserve1 == 0) return (0, 0);
+
+        // TWAP = (累计终值 - 累计初值) / 时间
+        // 结果已是 UQ112x112 定点数格式
+        twap = (priceCumulativeEnd - priceCumulativeStart) / timeElapsed;
+
+        // 同时返回 1e18 精度的价格（方便前端直接用）
+        // 把 UQ112x112 转成 1e18: twap * 1e18 / 2^112
+        priceRaw = (twap * 1e18) / (2 ** 112);
+    }
+
+    /// @notice 查询 token1 在一段时间内的 TWAP
+    function queryTWAP1(uint256 priceCumulativeStart, uint256 priceCumulativeEnd, uint32 timeElapsed) public view returns (uint256 twap, uint256 priceRaw) {
+        if (timeElapsed == 0 || reserve0 == 0 || reserve1 == 0) return (0, 0);
+        twap = (priceCumulativeEnd - priceCumulativeStart) / timeElapsed;
+        priceRaw = (twap * 1e18) / (2 ** 112);
+    }
+
+    /// @notice 快照当前价格累积值 + 时间戳（供 TWAP 查询使用）
+    /// @dev 调用者保存返回值，N 秒后再次调用，用差值算 TWAP
+    /// @return cumul0 price0CumulativeLast 的当前值
+    /// @return cumul1 price1CumulativeLast 的当前值
+    /// @return timestamp 当前区块时间戳
+    function snapshotPriceCumulative() external view returns (uint256 cumul0, uint256 cumul1, uint32 timestamp) {
+        return (price0CumulativeLast, price1CumulativeLast, uint32(block.timestamp));
+    }
+
+    /// @notice 查询过去一段时间的 TWAP（一步到位）
+    /// @dev 需要配合 snapshotPriceCumulative 保存的快照使用
+    /// @param cumul0Start 之前快照的 price0CumulativeLast
+    /// @param cumul1Start 之前快照的 price1CumulativeLast
+    /// @param timestampStart 之前快照的区块时间戳
+    /// @return twap0 token0 的 TWAP（1e18 精度）
+    /// @return twap1 token1 的 TWAP（1e18 精度）
+    /// @return elapsed 实际经过的秒数
+    function consult(uint256 cumul0Start, uint256 cumul1Start, uint32 timestampStart) external view returns (uint256 twap0, uint256 twap1, uint32 elapsed) {
+        uint32 timestampEnd = uint32(block.timestamp);
+
+        // 时间不能倒流（链上不会，但防止传错参数）
+        if (timestampEnd <= timestampStart) return (0, 0, 0);
+
+        elapsed = timestampEnd - timestampStart;
+
+        // 计算 TWAP
+        uint256 _twap0Row = (price0CumulativeLast - cumul0Start) / elapsed;
+        uint256 _twap1Row = (price1CumulativeLast - cumul1Start) / elapsed;
+
+        // 转成 1e18 精度方便使用
+        twap0 = (_twap0Row * 1e18) / (2 ** 112);
+        twap1 = (_twap1Row * 1e18) / (2 ** 112);
     }
 
     // ============ 辅助函数 ============

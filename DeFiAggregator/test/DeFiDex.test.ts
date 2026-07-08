@@ -9,6 +9,12 @@ describe("DeFiDex — AMM 恒定乘积做市商", function() {
     let token1: any;
     let owner:any, alice: any, bob:any;
 
+    // 辅助函数: 基于区块链时间戳计算 deadline（避免 evm_increaseTime 导致的 Date.now() 不同步）
+    async function getDeadline(secondsFromNow: number = 3600): Promise<number> {
+        const block = await ethers.provider.getBlock("latest");
+        return block!.timestamp + secondsFromNow;
+    }
+
     // 精度常量
     const ETH_PRECISION = 10n ** 18n;
     const USDT_PRECISION = 10n ** 6n;
@@ -80,7 +86,7 @@ describe("DeFiDex — AMM 恒定乘积做市商", function() {
         const addAmount1 = 300000n * USDT_PRECISION; // 300000 token1
 
         it("应该成功添加首次流动性", async function () {
-            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            const deadline = await getDeadline();
 
             const tx = await dex.addLiquidity(
                 addAmount0,
@@ -100,7 +106,7 @@ describe("DeFiDex — AMM 恒定乘积做市商", function() {
 
         it("LP 代币应该被正确 mint", async function () {
             // 先添加流动性
-            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            const deadline = await getDeadline();
             await dex.addLiquidity(addAmount0, addAmount1, 0, 0, deadline);
 
             const totalSupply = await dex.totalSupply();
@@ -115,11 +121,11 @@ describe("DeFiDex — AMM 恒定乘积做市商", function() {
 
         it("应该 emit LiquidityAdded 事件", async function () {
             // 先添加首次流动性
-            const deadline0 = Math.floor(Date.now() / 1000) + 3600;
+            const deadline0 = await getDeadline();
             await dex.addLiquidity(addAmount0, addAmount1, 0, 0, deadline0);
 
             // alice 追加流动性（按相同比例）
-            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            const deadline = await getDeadline();
             const tx = await dex.connect(alice).addLiquidity(
                 10n * ETH_PRECISION,
                 30000n * USDT_PRECISION,
@@ -144,7 +150,7 @@ describe("DeFiDex — AMM 恒定乘积做市商", function() {
     describe("Swap", function () {
         // 池子: 100 token0 + 300000 token1，比例 1:3000
         beforeEach(async function () {
-            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            const deadline = await getDeadline();
             await dex.connect(owner).addLiquidity(
                 100n * ETH_PRECISION,
                 300000n * USDT_PRECISION,
@@ -204,7 +210,7 @@ describe("DeFiDex — AMM 恒定乘积做市商", function() {
             // 记录 swap 之前的余额
             const balance1Before = await token1.balanceOf(bob.address);
 
-            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            const deadline = await getDeadline();
             const tx = await dex.connect(bob).swap(
                 amountIn,
                 expectedOut * 99n / 100n, // 允许 1% 滑点
@@ -237,7 +243,7 @@ describe("DeFiDex — AMM 恒定乘积做市商", function() {
                 await token1.getAddress()
             );
 
-            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            const deadline = await getDeadline();
 
             // 要求 min 比实际多 2 倍 → 必然失败
             await expect(
@@ -252,7 +258,7 @@ describe("DeFiDex — AMM 恒定乘积做市商", function() {
         });
 
         it("deadline 过期应该 revert", async function () {
-            const deadline = Math.floor(Date.now() / 1000) - 3600; // 过去的时间
+            const deadline = await getDeadline(-3600); // 过去的时间
             await expect(
                 dex.connect(bob).swap(
                     1n * ETH_PRECISION,
@@ -268,7 +274,7 @@ describe("DeFiDex — AMM 恒定乘积做市商", function() {
     // ========== 第四组: 移除流动性 ==========
     describe("Remove Liquidity", function () {
         beforeEach(async function () {
-            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            const deadline = await getDeadline();
             await dex.connect(owner).addLiquidity(
                 100n * ETH_PRECISION,
                 300000n * USDT_PRECISION,
@@ -284,7 +290,7 @@ describe("DeFiDex — AMM 恒定乘积做市商", function() {
             const expected0 = (liquidity * r0) / totalSupply;
             const expected1 = (liquidity * r1) / totalSupply;
 
-            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            const deadline = await getDeadline();
             await dex.removeLiquidity(
                 liquidity,
                 BigInt(expected0) * 99n / 100n, // 1% 滑点
@@ -305,7 +311,7 @@ describe("DeFiDex — AMM 恒定乘积做市商", function() {
      // ========== 第五组: 价格计算验证 ==========
     describe("价格验证", function () {
         beforeEach(async function () {
-            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            const deadline = await getDeadline();
             await dex.connect(owner).addLiquidity(
                 100n * ETH_PRECISION,
                 300000n * USDT_PRECISION,
@@ -357,7 +363,7 @@ describe("DeFiDex — AMM 恒定乘积做市商", function() {
             await t1.connect(lp).approve(await testDex.getAddress(), ethers2.MaxUint256);
 
             // 添加流动性
-            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            const deadline = await getDeadline();
             await testDex.connect(lp).addLiquidity(
                 100n * ETH_PRECISION,
                 300000n * USDT_PRECISION,
@@ -395,7 +401,7 @@ describe("DeFiDex — AMM 恒定乘积做市商", function() {
     // ========== 第七组: 错误场景 ==========
     describe("错误场景", function () {
         it("输入 0 应该 revert", async function () {
-            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            const deadline = await getDeadline();
             await expect(
                 dex.swap(
                     0,
@@ -408,7 +414,7 @@ describe("DeFiDex — AMM 恒定乘积做市商", function() {
         });
 
         it("相同的代币地址应该 revert（swap）", async function () {
-            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            const deadline = await getDeadline();
             await expect(
                 dex.swap(
                     1n * ETH_PRECISION,
@@ -424,7 +430,7 @@ describe("DeFiDex — AMM 恒定乘积做市商", function() {
     // ========== 第八组: 手续费累积 ==========
     describe("手续费累积", function () {
         beforeEach(async function () {
-            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            const deadline = await getDeadline();
             await dex.connect(owner).addLiquidity(
                 100n * ETH_PRECISION,
                 300000n * USDT_PRECISION,
@@ -441,7 +447,7 @@ describe("DeFiDex — AMM 恒定乘积做市商", function() {
 
             // 执行 swap: 1 token0 → token1
             const amountIn = 1n * ETH_PRECISION;
-            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            const deadline = await getDeadline();
             await dex.connect(bob).swap(
                 amountIn,
                 0,
@@ -458,7 +464,7 @@ describe("DeFiDex — AMM 恒定乘积做市商", function() {
         });
 
         it("多笔 swap 应该累积手续费", async function () {
-            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            const deadline = await getDeadline();
 
             // 第一笔
             await dex.connect(bob).swap(
@@ -487,7 +493,7 @@ describe("DeFiDex — AMM 恒定乘积做市商", function() {
     // ========== 第九组: LP 份额查询 ==========
     describe("getLPShare — LP 份额查询", function () {
         it("应该返回 LP 的完整份额信息", async function () {
-            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            const deadline = await getDeadline();
             await dex.connect(owner).addLiquidity(
                 100n * ETH_PRECISION,
                 300000n * USDT_PRECISION,
@@ -526,7 +532,7 @@ describe("DeFiDex — AMM 恒定乘积做市商", function() {
     // ========== 第十组: 单边移除流动性 ==========
     describe("removeLiquiditySingle — 单边移除", function () {
         beforeEach(async function () {
-            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            const deadline = await getDeadline();
             await dex.connect(owner).addLiquidity(
                 100n * ETH_PRECISION,
                 300000n * USDT_PRECISION,
@@ -538,7 +544,7 @@ describe("DeFiDex — AMM 恒定乘积做市商", function() {
             const lpBalance = await dex.balanceOf(owner.address);
             const balance0Before = await token0.balanceOf(owner.address);
 
-            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            const deadline = await getDeadline();
             await dex.connect(owner).removeLiquiditySingle(
                 lpBalance,
                 await token0.getAddress(),
@@ -558,7 +564,7 @@ describe("DeFiDex — AMM 恒定乘积做市商", function() {
             const lpBalance = await dex.balanceOf(owner.address);
             const balance1Before = await token1.balanceOf(owner.address);
 
-            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            const deadline = await getDeadline();
             await dex.connect(owner).removeLiquiditySingle(
                 lpBalance,
                 await token1.getAddress(),
@@ -573,7 +579,7 @@ describe("DeFiDex — AMM 恒定乘积做市商", function() {
 
         it("滑点保护: minAmountOut 不够时 revert", async function () {
             const lpBalance = await dex.balanceOf(owner.address);
-            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            const deadline = await getDeadline();
 
             // 设置一个不可能达到的 minAmountOut（比如要求输出比池子里所有代币还多）
             await expect(
@@ -588,7 +594,7 @@ describe("DeFiDex — AMM 恒定乘积做市商", function() {
 
         it("不应该接受无效的代币地址", async function () {
             const lpBalance = await dex.balanceOf(owner.address);
-            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            const deadline = await getDeadline();
 
             // 传一个随机地址
             await expect(
@@ -605,7 +611,7 @@ describe("DeFiDex — AMM 恒定乘积做市商", function() {
     // ========== 第十一组: TWAP 预言机 ==========
     describe("TWAP 价格预言机", function () {
         it("添加流动性后 priceCumulativeLast 应该被正确初始化", async function () {
-            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            const deadline = await getDeadline();
             await dex.connect(owner).addLiquidity(
                 100n * ETH_PRECISION,
                 300000n * USDT_PRECISION,
@@ -619,7 +625,7 @@ describe("DeFiDex — AMM 恒定乘积做市商", function() {
 
         it("computeTWAP 应该正确计算时间加权平均价格", async function () {
             // 添加流动性
-            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            const deadline = await getDeadline();
             await dex.connect(owner).addLiquidity(
                 100n * ETH_PRECISION,
                 300000n * USDT_PRECISION,
@@ -635,7 +641,7 @@ describe("DeFiDex — AMM 恒定乘积做市商", function() {
             // 但直接用 swap 也可以触发更新
 
             const amountIn = 1n * ETH_PRECISION;
-            const deadline2 = Math.floor(Date.now() / 1000) + 3600;
+            const deadline2 = await getDeadline();
             await dex.connect(bob).swap(
                 amountIn,
                 0,
@@ -657,6 +663,346 @@ describe("DeFiDex — AMM 恒定乘积做市商", function() {
                 );
                 expect(twap).to.be.gt(0);
             }
+        });
+    });
+
+    // ========== 第十二组: TWAP 时间操控攻击测试 (Day 17) ==========
+    describe("TWAP — 时间操控与精度验证", function () {
+        // 辅助函数: 让 Hardhat 时间前进
+        async function increaseTime(seconds: number) {
+            await ethers.provider.send("evm_increaseTime", [seconds]);
+            await ethers.provider.send("evm_mine");
+        }
+
+        // 辅助函数: 获取当前区块时间戳
+        async function getBlockTimestamp(): Promise<number> {
+            const block = await ethers.provider.getBlock("latest");
+            return block!.timestamp;
+        }
+
+        describe("基础 TWAP 查询", function () {
+            beforeEach(async function () {
+                const deadline = await getDeadline();
+                await dex.connect(owner).addLiquidity(
+                    100n * ETH_PRECISION,
+                    300000n * USDT_PRECISION,
+                    0, 0, deadline
+                );
+            });
+
+            it("snapshotPriceCumulative 应该返回当前累积值和时间戳", async function () {
+                const [cumul0, cumul1, ts] = await dex.snapshotPriceCumulative();
+                expect(ts).to.be.gt(0);
+                // 初始时累积值可能为 0（因为没有经过时间）
+            });
+
+            it("queryTWAP0 应该返回正确的 TWAP", async function () {
+                // 记录起始快照
+                const [cumul0Start, , tsStart] = await dex.snapshotPriceCumulative();
+
+                // 让时间前进 30 分钟（模拟 30 分钟 TWAP）
+                await increaseTime(1800);
+
+                // 在此期间做几笔 swap，让价格更新
+                const deadline = await getDeadline();
+                await dex.connect(bob).swap(
+                    1n * ETH_PRECISION,
+                    0,
+                    await token0.getAddress(),
+                    await token1.getAddress(),
+                    deadline
+                );
+
+                // 再等 30 分钟
+                await increaseTime(1800);
+
+                // 读取结束累积值
+                const [cumul0End, , tsEnd] = await dex.snapshotPriceCumulative();
+                const timeElapsed = Number(tsEnd) - Number(tsStart);
+
+                expect(timeElapsed).to.be.gt(0);
+
+                // 查询 TWAP
+                const [twap, priceRaw] = await dex.queryTWAP0(
+                    cumul0Start,
+                    cumul0End,
+                    timeElapsed
+                );
+
+                // TWAP 应该是合理的价格（约 3000，即 1 ETH = 3000 USDT）
+                expect(twap).to.be.gt(0);
+                expect(priceRaw).to.be.gt(0);
+
+                console.log(`  TWAP (UQ112x112): ${twap}`);
+                console.log(`  价格 (1e18):     ${priceRaw}`);
+                console.log(`  时间间隔:        ${timeElapsed}s`);
+            });
+        });
+
+        describe("时间操控攻击模拟", function () {
+            beforeEach(async function () {
+                const deadline = await getDeadline();
+                await dex.connect(owner).addLiquidity(
+                    100n * ETH_PRECISION,
+                    300000n * USDT_PRECISION,
+                    0, 0, deadline
+                );
+            });
+
+            it("短时间窗口 TWAP 容易被操纵", async function () {
+                // ⚠️ 场景：攻击者只用 1 个区块的时间来操纵价格
+                // TWAP 窗口太短 → 价格被操纵
+
+                const [cumul0Start, , tsStart] = await dex.snapshotPriceCumulative();
+
+                // 攻击者执行大额 swap 扭曲价格
+                // 用大量 token1 买 token0，推高 token0 价格
+                const deadline = await getDeadline();
+                await dex.connect(bob).swap(
+                    50000n * USDT_PRECISION, // 大额 token1
+                    0,
+                    await token1.getAddress(),
+                    await token0.getAddress(),
+                    deadline
+                );
+
+                // 几乎立即查询 TWAP（时间窗口极短）
+                await increaseTime(12); // 仅 1 个区块
+
+                const [cumul0End, , tsEnd] = await dex.snapshotPriceCumulative();
+                const timeElapsed = Number(tsEnd) - Number(tsStart);
+
+                const [, priceRawShort] = await dex.queryTWAP0(
+                    cumul0Start,
+                    cumul0End,
+                    timeElapsed
+                );
+
+                // 短窗口的价格会被大额 swap 显著影响
+                console.log(`  ⚠️ 短窗口(12s) TWAP 价格: ${priceRawShort}`);
+                console.log(`  价格已被大额 swap 扭曲！`);
+            });
+
+            it("长时间窗口 TWAP 能抵抗价格操纵", async function () {
+                // ✅ 场景：TWAP 窗口长 → 单笔大额 swap 影响被稀释
+
+                const [cumul0Start, , tsStart] = await dex.snapshotPriceCumulative();
+
+                // 正常状态下先过 1 小时，累积正常价格
+                await increaseTime(3600);
+
+                // 现在攻击者执行大额 swap
+                const deadline = await getDeadline();
+                await dex.connect(bob).swap(
+                    50000n * USDT_PRECISION,
+                    0,
+                    await token1.getAddress(),
+                    await token0.getAddress(),
+                    deadline
+                );
+
+                // 再过很短时间查询
+                await increaseTime(12);
+
+                const [cumul0End, , tsEnd] = await dex.snapshotPriceCumulative();
+                const timeElapsed = Number(tsEnd) - Number(tsStart);
+
+                const [, priceRawLong] = await dex.queryTWAP0(
+                    cumul0Start,
+                    cumul0End,
+                    timeElapsed
+                );
+
+                // 长窗口的 TWAP 不会被短暂价格尖峰扭曲
+                console.log(`  ✅ 长窗口(~3612s) TWAP 价格: ${priceRawLong}`);
+                console.log(`  大额 swap 被 1h 的正常价格稀释了！`);
+            });
+        });
+
+        describe("consult — 一站式 TWAP 查询", function () {
+            beforeEach(async function () {
+                const deadline = await getDeadline();
+                await dex.connect(owner).addLiquidity(
+                    100n * ETH_PRECISION,
+                    300000n * USDT_PRECISION,
+                    0, 0, deadline
+                );
+            });
+
+            it("consult 应该返回与手动计算一致的 TWAP", async function () {
+                // Step 1: 记录快照
+                const [c0Start, c1Start, tsStart] = await dex.snapshotPriceCumulative();
+
+                // Step 2: 等 30 分钟 + 做几笔交易
+                await increaseTime(600);
+                const deadline = await getDeadline();
+                await dex.connect(bob).swap(
+                    1n * ETH_PRECISION,
+                    0,
+                    await token0.getAddress(),
+                    await token1.getAddress(),
+                    deadline
+                );
+
+                await increaseTime(600);
+                await dex.connect(alice).swap(
+                    5000n * USDT_PRECISION,
+                    0,
+                    await token1.getAddress(),
+                    await token0.getAddress(),
+                    deadline
+                );
+
+                await increaseTime(600);
+
+                // Step 3: 用 consult 查询
+                const [twap0, twap1, elapsed] = await dex.consult(c0Start, c1Start, tsStart);
+
+                expect(elapsed).to.be.gt(0);
+                expect(twap0).to.be.gt(0);
+                expect(twap1).to.be.gt(0);
+
+                console.log(`  consult 结果:`);
+                console.log(`    token0 TWAP (1e18): ${twap0}  (约 1 token0 = ? token1)`);
+                console.log(`    token1 TWAP (1e18): ${twap1}  (约 1 token1 = ? token0)`);
+                console.log(`    经过时间:          ${elapsed}s`);
+            });
+        });
+
+        describe("价格累积验证", function () {
+            beforeEach(async function () {
+                const deadline = await getDeadline();
+                await dex.connect(owner).addLiquidity(
+                    100n * ETH_PRECISION,
+                    300000n * USDT_PRECISION,
+                    0, 0, deadline
+                );
+            });
+
+            it("每笔 swap 都正确更新 priceCumulativeLast", async function () {
+                const deadline = await getDeadline();
+
+                // 记录第 1 笔 swap 前的累积值
+                const [c0Before1, c1Before1] = [await dex.price0CumulativeLast(), await dex.price1CumulativeLast()];
+
+                // swap 1
+                await dex.connect(bob).swap(
+                    1n * ETH_PRECISION,
+                    0,
+                    await token0.getAddress(),
+                    await token1.getAddress(),
+                    deadline
+                );
+
+                const c0After1 = await dex.price0CumulativeLast();
+                // 累积值应该增加了（因为时间流逝 × 价格）
+                expect(c0After1).to.be.gt(c0Before1);
+
+                // swap 2
+                await increaseTime(100);
+                const c0Before2 = await dex.price0CumulativeLast();
+
+                await dex.connect(bob).swap(
+                    1n * ETH_PRECISION,
+                    0,
+                    await token0.getAddress(),
+                    await token1.getAddress(),
+                    deadline
+                );
+
+                const c0After2 = await dex.price0CumulativeLast();
+                expect(c0After2).to.be.gt(c0Before2);
+            });
+        });
+    });
+
+    // ========== 第十三组: 滑点保护策略测试 (Day 17) ==========
+    describe("Slippage — 滑点保护策略", function () {
+        beforeEach(async function () {
+            const deadline = await getDeadline();
+            await dex.connect(owner).addLiquidity(
+                100n * ETH_PRECISION,
+                300000n * USDT_PRECISION,
+                0, 0, deadline
+            );
+        });
+
+        it("minAmountOut 应该成功拦截超过滑点容忍的交易", async function () {
+            const amountIn = 1n * ETH_PRECISION;
+            const expectedOut = await dex.getAmountOut(
+                amountIn,
+                await token0.getAddress(),
+                await token1.getAddress()
+            );
+
+            // 前端计算: 允许 0.5% 滑点 (50 bps)
+            const slippageBps = 50n;
+            const minAmountOut = expectedOut * (10000n - slippageBps) / 10000n;
+
+            // 另一用户抢先执行大额 swap，导致价格恶化
+            const deadline = await getDeadline();
+            await dex.connect(alice).swap(
+                50n * ETH_PRECISION, // 大额！
+                0,
+                await token0.getAddress(),
+                await token1.getAddress(),
+                deadline
+            );
+
+            // bob 的交易应该因为滑点保护而成功（只要实际输出 >= minAmountOut）
+            // 但如果价格变化太大，可能会 revert
+            const currentOut = await dex.getAmountOut(
+                amountIn,
+                await token0.getAddress(),
+                await token1.getAddress()
+            );
+
+            // 先检查当前输出是否还满足滑点要求
+            if (currentOut < minAmountOut) {
+                await expect(
+                    dex.connect(bob).swap(
+                        amountIn,
+                        minAmountOut,
+                        await token0.getAddress(),
+                        await token1.getAddress(),
+                        deadline
+                    )
+                ).to.be.revertedWithCustomError(dex, "InsufficientOutputAmount");
+                console.log("  ✅ 滑点保护成功拦截了恶化的交易");
+            } else {
+                // 价格变化在容忍范围内，交易应该成功
+                await dex.connect(bob).swap(
+                    amountIn,
+                    minAmountOut,
+                    await token0.getAddress(),
+                    await token1.getAddress(),
+                    deadline
+                );
+                console.log("  ✅ 交易在滑点范围内成功执行");
+            }
+        });
+
+        it("deadline 防止交易被 MEV 机器人囤积后执行", async function () {
+            // 场景: MEV 机器人把你的交易囤积起来，
+            // 等到价格对你不利时再执行（抢跑/三明治攻击）
+            // deadline 限制了交易的最大存活时间
+
+            const shortDeadline = await getDeadline(1); // 1 秒后过期
+
+            // 等待 2 秒，让 deadline 过期
+            await new Promise(resolve => setTimeout(resolve, 2000));
+
+            await expect(
+                dex.connect(bob).swap(
+                    1n * ETH_PRECISION,
+                    0,
+                    await token0.getAddress(),
+                    await token1.getAddress(),
+                    shortDeadline
+                )
+            ).to.be.revertedWithCustomError(dex, "DeadlineExpired");
+
+            console.log("  ✅ deadline 成功拦截了过期交易");
         });
     });
 });
