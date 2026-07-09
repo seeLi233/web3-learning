@@ -127,6 +127,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # 需要 node_modules 来解析 OpenZeppelin 等 npm 包
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
       # 一键安装 Foundry 工具链
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
