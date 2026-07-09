@@ -140,9 +140,9 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
 
-      # 运行覆盖率分析，生成 lcov 格式报告
+      # 运行覆盖率分析（--ir-minimum 解决 DeFiDex 等复杂合约的栈溢出）
       - name: Run coverage
-        run: forge coverage --report lcov
+        run: forge coverage --report lcov --ir-minimum
 
       # 上传覆盖率报告
       - name: Upload coverage report
