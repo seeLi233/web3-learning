@@ -29,10 +29,8 @@
     "ethers": "^6.16.0",
     "forge-std": "github:foundry-rs/forge-std#v1.9.4",
     "hardhat": "^3.9.0",
-    "hardhat-gas-reporter": "^2.3.0",
     "mocha": "^11.7.6",
     "solhint": "^6.2.3",
-    "solidity-coverage": "^0.8.17",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.63.0"
   },
