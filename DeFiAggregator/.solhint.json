@@ -1,0 +1,15 @@
+{
+  "rules": {
+    "avoid-suicide": "error",
+    "avoid-throw": "error",
+    "avoid-tx-origin": "error",
+    "check-send-result": "error",
+    "reentrancy": "error",
+    "func-visibility": ["warn", { "ignoreConstructors": true }],
+    "state-visibility": "warn",
+    "compiler-version": ["error", "^0.8.0"],
+    "multiple-sends": "warn",
+    "no-complex-fallback": "warn",
+    "avoid-sha3": "warn"
+  }
+}

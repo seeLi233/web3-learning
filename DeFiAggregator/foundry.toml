@@ -1,0 +1,10 @@
+[profile.default]
+src = "contracts"
+test = "contracts"
+solc_version = "0.8.28"
+
+# 告诉 Foundry npm 包路径（没有 git submodule 时的替代方案）
+remappings = [
+  "forge-std/=node_modules/forge-std/src/",
+  "@openzeppelin/=node_modules/@openzeppelin/",
+]

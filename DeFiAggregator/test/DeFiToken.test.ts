@@ -585,7 +585,7 @@ describe("DeFiToken", function() {
 
     // ==================== Gas 分析测试（Day 13 新增）========================
     describe("Gas Analysis", function() {
-        let gasReport: Record<string, { min: bigint; max: bigint; total: bigint; count: number }> = {};
+        const gasReport: Record<string, { min: bigint; max: bigint; total: bigint; count: number }> = {};
 
          // 辅助函数：记录 gas 消耗
         async function measureGas(label: string, txPromise: Promise<any>) {
