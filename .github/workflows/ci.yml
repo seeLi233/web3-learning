@@ -144,9 +144,22 @@ jobs:
       - name: Run coverage
         run: forge coverage --report lcov --ir-minimum
 
-      # 上传覆盖率报告
-      - name: Upload coverage report
+      # 将 lcov 数据转为 HTML 网页报告（可以直接在浏览器打开）
+      - name: Generate HTML report
+        run: |
+          sudo apt-get install -y lcov
+          genhtml lcov.info -o coverage-html
+
+      # 上传原始数据（给 VS Code 插件用）
+      - name: Upload lcov data
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-report
+          name: coverage-lcov
           path: DeFiAggregator/lcov.info
+
+      # 上传 HTML 报告（下载后解压，打开 index.html 即可）
+      - name: Upload HTML report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html
+          path: DeFiAggregator/coverage-html
