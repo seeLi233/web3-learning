@@ -17,7 +17,11 @@ jobs:
   # ──────────────────────────────────────────
   build-and-test:
     name: Build & Test
-    runs-on: ubuntu-latest       # 用 GitHub 提供的 Ubuntu 虚拟机
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: DeFiAggregator  # 所有命令在子目录下执行
 
     steps:
       # Step 1: 把仓库代码拉到虚拟机上
@@ -28,11 +32,11 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22        # 跟你的本地版本保持一致
+          node-version: 22
 
       # Step 3: 安装项目依赖
       - name: Install dependencies
-        run: npm ci              # ci = clean install，比 npm install 更严格、更快
+        run: npm ci
 
       # Step 4: 编译 Solidity 合约
       - name: Compile contracts
@@ -48,6 +52,10 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: DeFiAggregator
 
     steps:
       - name: Checkout code
@@ -75,7 +83,11 @@ jobs:
   gas-report:
     name: Gas Report
     runs-on: ubuntu-latest
-    needs: build-and-test        # 等测试过了再跑，不浪费资源
+    needs: build-and-test
+
+    defaults:
+      run:
+        working-directory: DeFiAggregator
 
     steps:
       - name: Checkout code
@@ -98,7 +110,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: gas-report
-          path: gas-report.txt
+          path: DeFiAggregator/gas-report.txt   # 路径要加上子目录
 
   # ──────────────────────────────────────────
   # Job 4: Solidity 测试覆盖率（用 Foundry）
@@ -106,6 +118,10 @@ jobs:
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: DeFiAggregator
 
     steps:
       - name: Checkout code
@@ -124,4 +140,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
-          path: lcov.info
+          path: DeFiAggregator/lcov.info
