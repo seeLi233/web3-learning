@@ -379,4 +379,205 @@ describe("🏦 DeFiLending — 借贷协议核心", function () {
             expect(configAfter.liquidityIndex).to.equal(indexBefore);
         });
     });
+
+    // ==================== 清算测试 ====================
+
+    describe("🔪 Liquidation — 清算机制", function () {
+        beforeEach(async function () {
+            // 构建清算场景：user1 接近最大借款额度，利息累积后 HF < 1
+            const tokenAAddr = await tokenA.getAddress();
+            const tokenBAddr = await tokenB.getAddress();
+
+            // user2 提供 TKB 流动性（借出池），金额匹配 outer beforeEach 铸造量
+            await lending.connect(user2).deposit(tokenBAddr, WAD * 1000n);
+
+            // user1 存抵押品
+            await lending.connect(user1).deposit(tokenAAddr, WAD * 1000n);
+
+            // user1 借到接近上限：抵押价值 = 1000 × 0.80 = 800，借 750（HF ≈ 1.067）
+            // U = 750/1000 = 75%, borrowRate = 2%+75%×10% = 9.5%, 365天后债务~821，HF < 1
+            await lending.connect(user1).borrow(tokenBAddr, WAD * 750n);
+
+            // 快进 365 天，让利息把债务推到超过抵押价值
+            await ethers.provider.send("evm_increaseTime", [365 * 24 * 3600]);
+            await ethers.provider.send("evm_mine");
+
+            // 触发利率更新（任意操作）
+            await lending.connect(user2).deposit(tokenBAddr, 1n);
+
+            // 清算者准备还款资金（TKB）—— 约一半债务 ~410，铸造 2000 足够
+            await tokenB.mint(owner.address, WAD * 2000n);
+            await tokenB.connect(owner).approve(await lending.getAddress(), ethers.MaxUint256);
+        });
+
+        it("正常清算：HF < 1 时清算者还债拿走抵押品", async function () {
+            const tokenAAddr = await tokenA.getAddress();
+            const tokenBAddr = await tokenB.getAddress();
+
+            // 确认 user1 已不健康
+            const hfBefore = await lending.getHealthFactor(user1.address);
+            console.log("HF before liquidation:", ethers.formatUnits(hfBefore, 27));
+            expect(hfBefore).to.be.lt(RAY); // HF < 1
+
+            // 记录清算前余额
+            const liquidatorBalanceBefore = await tokenA.balanceOf(owner.address);
+            const user1CollateralBefore = (await lending.getUserPosition(user1.address, tokenAAddr)).supplyAmount;
+
+            // 获取用户债务
+            const [, userDebt] = await lending.getUserBalances(user1.address, tokenBAddr);
+            console.log("User debt:", ethers.formatUnits(userDebt, 18));
+
+            // 清算者替 user1 还一半债务
+            const repayAmount = userDebt / 2n;
+
+            // 执行清算
+            const tx = await lending.connect(owner).liquidate(
+                user1.address,
+                tokenBAddr,    // 债务资产
+                tokenAAddr,    // 抵押品资产
+                repayAmount
+            );
+
+            // 验证事件（HF 值在 tx 内会因 _updateIndexes 微调，不校验精确值）
+            await expect(tx)
+                .to.emit(lending, "Liquidated");
+
+            // 清算者获得抵押品（含 5% 奖励）
+            const liquidatorBalanceAfter = await tokenA.balanceOf(owner.address);
+            const gained = liquidatorBalanceAfter - liquidatorBalanceBefore;
+            const expectedGain = repayAmount + (repayAmount * LIQUIDATION_BONUS) / RAY;
+            // 允许微小精度误差
+            expect(gained).to.be.closeTo(expectedGain, 10n);
+
+            // user1 抵押品减少
+            const user1CollateralAfter = (await lending.getUserPosition(user1.address, tokenAAddr)).supplyAmount;
+            expect(user1CollateralAfter).to.be.lt(user1CollateralBefore);
+
+            // HF 清算后提升
+            const hfAfter = await lending.getHealthFactor(user1.address);
+            expect(hfAfter).to.be.gt(hfBefore);
+        });
+
+        it("正常清算：清算后 HF 提升", async function () {
+            const tokenAAddr = await tokenA.getAddress();
+            const tokenBAddr = await tokenB.getAddress();
+
+             const hfBefore = await lending.getHealthFactor(user1.address);
+
+             const [, userDebt] = await lending.getUserBalances(user1.address, tokenBAddr);
+             await lending.connect(owner).liquidate(
+                user1.address,
+                tokenBAddr,
+                tokenAAddr,
+                userDebt / 2n
+            );
+
+            const hfAfter = await lending.getHealthFactor(user1.address);
+            console.log("HF after liquidation:", ethers.formatUnits(hfAfter, 27));
+            expect(hfAfter).to.be.gte(hfBefore);
+        });
+
+        it("HF ≥ 1 时清算 → revert", async function () {
+            const tokenAAddr = await tokenA.getAddress();
+            const tokenBAddr = await tokenB.getAddress();
+
+            // 让 user2 同时有抵押品和少量债务，但 HF > 1（健康）
+            // user2 存入 TKA 作为抵押品
+            await lending.connect(user2).deposit(tokenAAddr, WAD * 2000n);
+            // user2 借少量 TKB（池子有 user1 借后剩余 + 触发操作的 1 wei ≈ 251 TKB）
+            await lending.connect(user2).borrow(tokenBAddr, WAD * 100n);
+
+            await expect(
+                lending.connect(owner).liquidate(
+                    user2.address,
+                    tokenBAddr,    // user2 有 TKB 债务
+                    tokenAAddr,    // user2 有 TKA 抵押品
+                    WAD * 100n
+                )
+            ).to.be.revertedWith("Position is healthy");
+        });
+
+        it("不能清算自己", async function () {
+            const tokenAAddr = await tokenA.getAddress();
+            const tokenBAddr = await tokenB.getAddress();
+
+            await expect(
+                lending.connect(user1).liquidate(
+                    user1.address,
+                    tokenBAddr,
+                    tokenAAddr,
+                    WAD * 100n
+                )
+            ).to.be.revertedWith("Cannot liquidate yourself");
+        });
+
+        it("清算债务超过 closeFactor(50%) → 只清算 50%", async function () {
+            const tokenAAddr = await tokenA.getAddress();
+            const tokenBAddr = await tokenB.getAddress();
+
+            const [, userDebt] = await lending.getUserBalances(user1.address, tokenBAddr);
+
+            // 尝试清算 100% 债务
+            await lending.connect(owner).liquidate(
+                user1.address,
+                tokenBAddr,
+                tokenAAddr,
+                userDebt  // 尝试还全部
+            );
+
+            // 验证只清算了一半
+            const [, remainingDebt] = await lending.getUserBalances(user1.address, tokenBAddr);
+            console.log("Initial debt:", ethers.formatUnits(userDebt, 18));
+            console.log("Remaining debt:", ethers.formatUnits(remainingDebt, 18));
+            // 剩余债务应该约为原来的一半（允许微小利息差异）
+            expect(remainingDebt).to.be.closeTo(userDebt / 2n, WAD / 10n);
+        });
+
+        it("closeFactor 限制单次最多清算 50% 债务", async function () {
+            const tokenAAddr = await tokenA.getAddress();
+            const tokenBAddr = await tokenB.getAddress();
+
+            // 记录清算前 user1 的抵押品（含利息）
+            const collatBefore = await lending.getUserCollateral(user1.address, tokenAAddr);
+
+            const [, userDebt] = await lending.getUserBalances(user1.address, tokenBAddr);
+
+            // 尝试清算 100% 债务（实际只会清算 50%）
+            await lending.connect(owner).liquidate(
+                user1.address,
+                tokenBAddr,
+                tokenAAddr,
+                userDebt
+            );
+
+            // 清算后 user1 抵押品减少，但因 closeFactor 限制仍余约一半
+            const collatAfter = await lending.getUserCollateral(user1.address, tokenAAddr);
+            console.log("Collateral before:", ethers.formatUnits(collatBefore, 18));
+            console.log("Collateral after:", ethers.formatUnits(collatAfter, 18));
+            expect(collatAfter).to.be.lt(collatBefore); // 确实减少了
+            expect(collatAfter).to.be.gt(0n);           // 但没被全部拿走
+
+            // 验证剩余债务约一半
+            const [, remainingDebt] = await lending.getUserBalances(user1.address, tokenBAddr);
+            expect(remainingDebt).to.be.closeTo(userDebt / 2n, WAD / 10n);
+        });
+
+        it("无债务用户 → revert", async function () {
+            const tokenAAddr = await tokenA.getAddress();
+            const tokenBAddr = await tokenB.getAddress();
+
+            // user2 存了 TokenA 但没有借款
+            await lending.connect(user2).deposit(tokenAAddr, WAD * 1000n);
+
+            await expect(
+                lending.connect(owner).liquidate(
+                    user2.address,
+                    tokenBAddr,  // user2 没有 TKB 债务
+                    tokenAAddr,
+                    WAD * 100n
+                )
+            ).to.be.revertedWith("No debt to liquidate");
+        });
+    });
+
 });

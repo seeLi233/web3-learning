@@ -35,6 +35,11 @@ contract DeFiLending is Ownable, ReentrancyGuard {
     uint256 public constant RAY = 1e27;     // 基础精度
     uint256 public constant SECONDS_PER_YEAR = 365 days;    // 年化时间基准
 
+    // ============ 清算配置 ============
+    uint256 public constant CLOSE_FACTOR = RAY / 2;  // 50%，单次最多清算 50% 的债务
+    uint256 public constant MAX_LIQUIDATION_BONUS = (RAY * 20) / 100;  // 20% 上限，防止奖励过高
+
+
     // ============ 资产配置 ============
     struct ReserveConfiguration {
         // --- 资产状态 ---
@@ -90,6 +95,17 @@ contract DeFiLending is Ownable, ReentrancyGuard {
     event Borrowed(address indexed user, address indexed asset, uint256 amount);
     event Repaid(address indexed user, address indexed asset, uint256 amount);
     event ReserveUpdated(address indexed asset, bool isActive, bool isFrozen);
+
+    event Liquidated(
+        address indexed liquidator,     // 清算者
+        address indexed user,           // 被清算的用户
+        address indexed debtAsset,      // 被偿还的债务资产
+        address collateralAsset,        // 被拿走的抵押品资产
+        uint256 debtRepaid,             // 清算者代还的债务
+        uint256 collateralLiquidated,   // 清算者拿走的抵押品
+        uint256 healthFactorBefore,     // 清算前 HF
+        uint256 healthFactorAfter       // 清算后 HF
+    );
 
     // ============ 初始化函数 ============
 
@@ -423,6 +439,124 @@ contract DeFiLending is Ownable, ReentrancyGuard {
         emit Repaid(msg.sender, asset, amount);
     }
 
+    // ============ 清算 ============
+
+    /// @notice 清算不健康仓位 — 替用户还债，拿走抵押品（含折扣）
+    ///
+    /// @dev 清算流程:
+    ///   1. 验证被清算者 HF < 1（不健康）
+    ///   2. 计算最大可清算债务: min(userDebt, closeFactor × userDebt)
+    ///   3. 计算抵押品奖励: debtToRepay × (1 + liquidationBonus)
+    ///   4. 清算者转债务代币给合约 → 合约烧掉用户债务
+    ///   5. 合约转抵押品给清算者（含奖励折扣）
+    ///   6. 验证清算后 HF 没有恶化
+    ///
+    /// @param user 被清算的用户地址
+    /// @param debtAsset 要替用户偿还的债务资产
+    /// @param collateralAsset 要拿走的抵押品资产
+    /// @param debtToCover 清算者想代还的债务金额
+    function liquidate(address user, address debtAsset, address collateralAsset, uint256 debtToCover) external nonReentrant {
+        // ========== 1. 前置检查 ==========
+        require(user != msg.sender, "Cannot liquidate yourself");
+        require(debtToCover > 0, "Amount must be > 0");
+
+        ReserveConfiguration storage debtConfig = _reserves[debtAsset];
+        ReserveConfiguration storage collateralConfig = _reserves[collateralAsset];
+        require(debtConfig.isActive && collateralConfig.isActive, "Reserve not active");
+        require(collateralConfig.canBeCollateral, "Not collateral asset");
+
+        // ========== 2. 更新两个资产的利率指数 ==========
+        _updateIndexes(debtAsset);
+        _updateIndexes(collateralAsset);
+
+        // ========== 3. 获取用户实际债务和抵押品余额 ==========
+        (, uint256 userDebt) = getUserBalances(user, debtAsset);
+        require(userDebt > 0, "No debt to liquidate");
+
+        uint256 userCollateral = getUserCollateral(user, collateralAsset);
+        require(userCollateral > 0, "No collateral");
+
+        // ========== 4. 验证健康因子（清算前） ==========
+        uint256 hfBefore = getHealthFactor(user);
+        require(hfBefore < RAY, "Position is healthy");
+
+        // ========== 5. 计算清算金额 ==========
+
+        // 5a. 不能超过 closeFactor × 用户总债务
+        uint256 maxLiquidatableDebt = (userDebt * CLOSE_FACTOR) / RAY;
+        uint256 actualDebtToCover = debtToCover > maxLiquidatableDebt ? maxLiquidatableDebt : debtToCover;
+        actualDebtToCover = actualDebtToCover > userDebt ? userDebt : actualDebtToCover;
+
+        // 5b. 计算可获得的抵押品（含清算奖励）
+        // collateralAmount = debtAmount × (1 + liquidationBonus)
+        uint256 liquidationBonus = collateralConfig.liquidationBonus;
+        require(liquidationBonus <= MAX_LIQUIDATION_BONUS, "Bonus too high");
+
+        uint256 collateralAmount = (actualDebtToCover + (actualDebtToCover * liquidationBonus) / RAY);
+
+        // 5c. 不能拿走超过用户实际拥有的抵押品
+        if (collateralAmount > userCollateral) {
+            // 用户抵押品不够 → 按实际抵押品反算能清算的债务
+            // debtToCover = collateralAmount / (1 + bonus)
+            collateralAmount = userCollateral;
+            actualDebtToCover = (collateralAmount * RAY) / (RAY + liquidationBonus);
+        }
+
+        // ========== 6. 执行清算（状态更新） ==========
+
+        // 6a. 减少用户的债务
+        UserPosition storage debtPosition = _positions[user][debtAsset];
+        uint256 newDebt = userDebt - actualDebtToCover;
+        if (newDebt == 0) {
+            debtPosition.borrowAmount = 0;
+            debtPosition.borrowIndex = 0;
+        } else {
+            debtPosition.borrowAmount = newDebt;
+            debtPosition.borrowIndex = debtConfig.variableBorrowIndex;
+        }
+
+        // 6b. 减少用户的抵押品
+        UserPosition storage collateralPosition = _positions[user][collateralAsset];
+        uint256 currentSupply = (collateralPosition.supplyAmount * collateralConfig.liquidityIndex) / collateralPosition.supplyIndex;
+        uint256 newSupply = currentSupply - collateralAmount;
+        if (newSupply == 0) {
+            collateralPosition.supplyAmount = 0;
+            collateralPosition.supplyIndex = 0;
+        } else {
+            collateralPosition.supplyAmount = newSupply;
+            collateralPosition.supplyIndex = collateralConfig.liquidityIndex;
+        }
+
+        // 6c. 更新全局状态
+        // 债务资产：债务减少，流动性增加（清算者还的钱进入池子）
+        debtConfig.totalVariableDebt -= actualDebtToCover;
+        debtConfig.totalLiquidity += actualDebtToCover;
+
+        // 抵押品资产：总流动性减少（抵押品被清算者拿走）
+        collateralConfig.totalLiquidity -= collateralAmount;
+
+        // ========== 7. 转账 ==========
+        // 清算者转债务代币给合约
+        IERC20(debtAsset).safeTransferFrom(msg.sender, address(this), actualDebtToCover);
+        // 合约转抵押品给清算者
+        IERC20(collateralAsset).safeTransfer(msg.sender, collateralAmount);
+
+        // ========== 8. 验证清算后 HF 没有恶化 ==========
+        uint256 hfAfter = getHealthFactor(user);
+        require(hfAfter >= hfBefore, "HF worsend after liquidation");
+
+        emit Liquidated(
+            msg.sender,
+            user,
+            debtAsset,
+            collateralAsset,
+            actualDebtToCover,
+            collateralAmount,
+            hfBefore,
+            hfAfter
+        );
+    }
+
     // ============ 健康因子计算 ⭐⭐⭐ ============
 
     // 2. 还款的"多退"设计
@@ -522,6 +656,45 @@ contract DeFiLending is Ownable, ReentrancyGuard {
                 totalDebt += borrowBalance;
             }
         }
+    }
+
+    /// @notice 获取用户在所有资产上的债务汇总
+    /// @dev 清算时需要知道用户"欠了哪些资产、各欠多少"
+    function getUserDebts(address user) public view returns (address[] memory debtAssets, uint256[] memory debtAmounts) {
+        // 先数一下有几笔债务
+        uint256 count;
+        for (uint256 i = 0; i < _reserveList.length; i++) {
+            address asset = _reserveList[i];
+            UserPosition storage pos = _positions[user][asset];
+            if (pos.borrowAmount > 0) {
+                (, uint256 debt) = getUserBalances(user, asset);
+                if (debt > 0) count++;
+            }
+        }
+
+        debtAssets = new address[](count);
+        debtAmounts = new uint256[](count);
+        uint256 idx;
+        for (uint256 i = 0; i < _reserveList.length; i++) {
+            address asset = _reserveList[i];
+            UserPosition storage pos = _positions[user][asset];
+            if (pos.borrowAmount > 0) {
+                (, uint256 debt) = getUserBalances(user, asset);
+                if (debt > 0) {
+                    debtAssets[idx] = asset;
+                    debtAmounts[idx] = debt;
+                    idx++;
+                }
+            }
+        }
+    }
+
+    /// @notice 获取用户在某资产上的抵押品余额（含利息）
+    function getUserCollateral(address user, address asset) public view returns (uint256) {
+        ReserveConfiguration storage config = _reserves[asset];
+        UserPosition storage position = _positions[user][asset];
+        if (position.supplyAmount == 0 || !config.canBeCollateral) return 0;
+        return (position.supplyAmount * config.liquidityIndex) / position.supplyIndex;
     }
 
     // ============ 紧急管理 ============
