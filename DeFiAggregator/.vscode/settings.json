@@ -2,5 +2,9 @@
   "solidity.hardhatConfigPath": "hardhat.config.ts",
   "solidity.packageDefaultDependenciesDirectory": "node_modules",
   "solidity.packageDefaultDependenciesContractsDirectory": "",
-  "solidity.enabledAsYouTypeCompilation": true
+  "solidity.enabledAsYouTypeCompilation": true,
+  "solidity.remappings": [
+    "forge-std/=node_modules/forge-std/src/",
+    "@openzeppelin/=node_modules/@openzeppelin/"
+  ]
 }
