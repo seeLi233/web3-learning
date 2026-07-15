@@ -13,7 +13,7 @@ enum ViolationType {
 
 describe("⚔️ Slashing — 罚没合约测试", function () {
     let slashing: any;
-    let owner: any, reporter: any, violator: any, other: any;
+    let owner: any, reporter: any, violator: any;
 
     const APPEAL_PERIOD = 1 * 24 * 3600; // 1 天申诉期
 
@@ -23,7 +23,7 @@ describe("⚔️ Slashing — 罚没合约测试", function () {
     const MALICIOUS_VOTE_RATE = 3000n; // 30%
 
     beforeEach(async function () {
-        [owner, reporter, violator, other] = await ethers.getSigners();
+        [owner, reporter, violator] = await ethers.getSigners();
 
         // 部署 Slashing 合约
         // stakingContract 先用 owner 地址占位（测试中不实际调用 staking）

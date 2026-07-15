@@ -60,7 +60,7 @@ describe("🔒 Timelock — 时间锁合约测试", function () {
             const tx = await timelock.connect(proposer).schedule(
                 target.address, 0, calldata, predecessor, salt
             );
-            const receipt = await tx.wait();
+            await tx.wait();
 
             // 从事件中提取 id
             const id = await timelock.hashOperation(
