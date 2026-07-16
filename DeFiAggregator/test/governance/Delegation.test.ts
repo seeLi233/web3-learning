@@ -5,13 +5,13 @@ const { ethers } = await network.create();
 
 describe("🗳️ Delegation — 委托投票合约测试", function () {
     let token: any;
-    let owner: any, alice: any, bob: any, carol: any;
+    let alice: any, bob: any, carol: any;
 
     const ONE_TOKEN = ethers.parseEther("1000");
     const HALF_TOKEN = ethers.parseEther("500");
 
     beforeEach(async function () {
-        [owner, alice, bob, carol] = await ethers.getSigners();
+        [alice, bob, carol] = await ethers.getSigners();
 
         // 部署测试代币（需要先用一个简单的 Mock 继承 Delegation）
         const TestVoteToken = await ethers.getContractFactory("TestVoteToken");
