@@ -50,7 +50,8 @@ describe("Governor", function () {
         token = await TestVoteToken.deploy();
 
         // 2. 部署 Timelock（minDelay=1 秒，测试用）
-        const Timelock = await ethers.getContractFactory("Timelock");
+        // const Timelock = await ethers.getContractFactory("Timelock");
+        const Timelock = await ethers.getContractFactory("TimelockController");
         timelock = await Timelock.deploy(
             5,                          // minDelay: 5 秒（大于 1 区块时间，能真正测试延迟）
             [],                          // proposers: 后面给 Governor 加
@@ -422,11 +423,11 @@ describe("Governor", function () {
             // Step 5: Queue → 加入 Timelock
             await governor.queue(proposalId);
 
-            const timelockId = await timelock.hashOperation(
-                targets[0], values[0], calldatas[0],
+            const timelockId = await timelock.hashOperationBatch(
+                targets, values, calldatas,
                 ethers.ZeroHash, ethers.ZeroHash
             );
-            expect(await timelock.isOperationSchedule(timelockId)).to.be.true;
+            expect(await timelock.isOperationScheduled(timelockId)).to.be.true;
 
             // Step 6: 等待 Timelock minDelay (5 秒)
             await ethers.provider.send("evm_increaseTime", [6]);
@@ -553,7 +554,7 @@ describe("Governor", function () {
             // 立即执行 — Timelock minDelay 未到 → 失败
             await expect(
                 governor.execute(proposalId)
-            ).to.be.revertedWithCustomError(timelock, "Timelock_NotReady");
+            ).to.be.revertedWithCustomError(timelock, "Timelock__NotReady");
         });
 
         it("G3. 未 Queue 的提案不能 Execute", async function () {
@@ -658,7 +659,7 @@ describe("Governor", function () {
             // 尝试立即执行 → Timelock 阻止
             await expect(
                 governor.execute(proposalId)
-            ).to.be.revertedWithCustomError(timelock, "Timelock_NotReady");
+            ).to.be.revertedWithCustomError(timelock, "Timelock__NotReady");
 
             // 只有在 minDelay 过后才能执行
             await ethers.provider.send("evm_increaseTime", [6]);
@@ -666,6 +667,118 @@ describe("Governor", function () {
 
             await governor.execute(proposalId);
             expect(await governor.stateOf(proposalId)).to.equal(ProposalState.Executed);
+        });
+    });
+
+    // ==================== J. Grace Period 过期测试（TimelockController 新特性） ====================
+
+    describe("J. Grace Period 过期测试", function () {
+        let proposalId: bigint;
+
+        beforeEach(async function () {
+            // 创建一个通过投票的提案
+            const result = await createTestProposal("Grace Period 测试");
+            proposalId = result.proposalId;
+            await ethers.provider.send("evm_mine", []);
+            await governor.connect(voter1).castVote(proposalId, VOTE_FOR);
+            await governor.connect(voter2).castVote(proposalId, VOTE_FOR);
+
+            for (let i = 0; i < VOTING_PERIOD + 5; i++) {
+                await ethers.provider.send("evm_mine", []);
+            }
+            // 现在是 Succeeded 状态
+        });
+
+        it("J1. 排队后在 Grace Period 内可以正常执行", async function () {
+            await governor.queue(proposalId);
+
+            // 确认 ETA 有值
+            const eta = await governor.getProposalEta(proposalId);
+            expect(eta).to.be.gt(0);
+
+            // 等待 minDelay
+            await ethers.provider.send("evm_increaseTime", [6]);
+            await ethers.provider.send("evm_mine", []);
+
+            await governor.execute(proposalId);
+            expect(await governor.stateOf(proposalId)).to.equal(ProposalState.Executed);
+        });
+
+        it("J2. 超过 Grace Period 后状态变为 Expired", async function () {
+            await governor.queue(proposalId);
+
+            // 计算 GRACE_PERIOD = 14 days = 14 * 24 * 3600 秒
+            const GRACE_PERIOD = 14 * 24 * 3600;
+            // 快进到 minDelay + GRACE_PERIOD + 1 秒
+            await ethers.provider.send("evm_increaseTime", [5 + GRACE_PERIOD + 1]);
+            await ethers.provider.send("evm_mine", []);
+
+            // 状态应该变为 Expired
+            expect(await governor.stateOf(proposalId)).to.equal(ProposalState.Expired);
+        });
+
+        it("J3. Expired 提案不能执行", async function () {
+            await governor.queue(proposalId);
+
+            const GRACE_PERIOD = 14 * 24 * 3600;
+            await ethers.provider.send("evm_increaseTime", [5 + GRACE_PERIOD + 1]);
+            await ethers.provider.send("evm_mine", []);
+
+            expect(await governor.stateOf(proposalId)).to.equal(ProposalState.Expired);
+
+            await expect(
+                governor.execute(proposalId)
+            ).to.be.revertedWithCustomError(governor, "Governor__NotQueued");
+        });
+    });
+
+    // ==================== K. ETA 查询测试（TimelockController 新特性） ====================
+
+    describe("K. ETA 查询 — getProposalEta", function () {
+        let proposalId: bigint;
+
+        beforeEach(async function () {
+            const result = await createTestProposal("ETA 测试");
+            proposalId = result.proposalId;
+            await ethers.provider.send("evm_mine", []);
+            await governor.connect(voter1).castVote(proposalId, VOTE_FOR);
+            await governor.connect(voter2).castVote(proposalId, VOTE_FOR);
+
+            for (let i = 0; i < VOTING_PERIOD + 5; i++) {
+                await ethers.provider.send("evm_mine", []);
+            }
+        });
+
+        it("K1. 未排队的提案 ETA = 0", async function () {
+            expect(await governor.getProposalEta(proposalId)).to.equal(0);
+        });
+
+        it("K2. 排队后 ETA 有值且在未来", async function () {
+            await governor.queue(proposalId);
+
+            const eta = await governor.getProposalEta(proposalId);
+            expect(eta).to.be.gt(0);
+
+            const latestBlock = await ethers.provider.getBlock("latest");
+            expect(eta).to.be.gt(latestBlock!.timestamp);
+        });
+
+        it("K3. 执行后 ETA = 0", async function () {
+            await governor.queue(proposalId);
+
+            await ethers.provider.send("evm_increaseTime", [6]);
+            await ethers.provider.send("evm_mine", []);
+            await governor.execute(proposalId);
+
+            // 执行后 Timelock 清理了存储 → ETA 返回 0
+            expect(await governor.getProposalEta(proposalId)).to.equal(0);
+            expect(await governor.stateOf(proposalId)).to.equal(ProposalState.Executed);
+        });
+
+        it("K4. 无效 ID → 回滚", async function () {
+            await expect(
+                governor.getProposalEta(999)
+            ).to.be.revertedWithCustomError(governor, "Governor__InvalidProposalId");
         });
     });
 });

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "./Timelock.sol";
+import "./TimelockController.sol";
 import "./Delegation.sol";
 
 /**
@@ -81,7 +81,7 @@ contract Governor {
     uint256 public constant GRACE_PERIOD = 14 days;
 
     // ============ 外部依赖 ============
-    Timelock public timelock;
+    TimelockController public timelock;
     Delegation public delegation;
 
     // ============ 事件 ============
@@ -138,7 +138,7 @@ contract Governor {
         require(_delegation != address(0), "Governor: zero delegation");
         require(_votingPeriod > 0, "Governor: voting period zero");
 
-        timelock = Timelock(_timelock);
+        timelock = TimelockController(_timelock);
         delegation = Delegation(_delegation);
         votingDelay = _votingDelay;
         votingPeriod = _votingPeriod;
@@ -428,8 +428,14 @@ contract Governor {
         // 注意: Queued 状态通过存储标记判断（queue 函数设置）
         // 这里用 Timelock 的状态查询
         bytes32 timelockId = _getTimelockId(proposal);
-        if (timelock.isOperationSchedule(timelockId)) return ProposalState.Queued;
-        if (timelock.isOperationDone(timelockId)) return ProposalState.Executed;
+        if (timelockId != bytes32(0)) {
+            if (timelock.isOperationDone(timelockId)) return ProposalState.Executed;
+
+            // ⭐ 新增: 检查是否过期
+            if (timelock.isOperationExpired(timelockId)) return ProposalState.Expired;
+
+            if (timelock.isOperationScheduled(timelockId)) return ProposalState.Queued;
+        }
 
         // Queued 之后超时未执行 — Expired
         // （简易判断: 如果已经过了 Timelock readyTime + GRACE_PERIOD）
@@ -473,15 +479,24 @@ contract Governor {
 
         // 把提案操作加入 Timelock
         // 注意: 需要 Governor 有 Timelock 的 PROPOSER_ROLE
-        for(uint256 i = 0; i < proposal.targets.length; i++) {
-            timelock.schedule(
-                proposal.targets[i],
-                proposal.values[i],
-                proposal.calldatas[i],
-                bytes32(0),         // predecessor: 无前置操作
-                bytes32(0)          // salt: 用默认值
-            );
-        }
+        // for(uint256 i = 0; i < proposal.targets.length; i++) {
+        //     timelock.schedule(
+        //         proposal.targets[i],
+        //         proposal.values[i],
+        //         proposal.calldatas[i],
+        //         bytes32(0),         // predecessor: 无前置操作
+        //         bytes32(0)          // salt: 用默认值
+        //     );
+        // }
+        // ✅ 改进: 用 scheduleBatch 一次性排队所有操作
+        timelock.scheduleBatch(
+            proposal.targets,
+            proposal.values,
+            proposal.calldatas,
+            bytes32(0),         // predecessor: 无前置依赖
+            bytes32(0),         // salt: 用默认值
+            timelock.minDelay() // delay
+        );
 
         emit ProposalQueued(proposalId, eta);
     }
@@ -505,15 +520,23 @@ contract Governor {
         Proposal storage proposal = _proposals[proposalId];
 
         // 调用 Timelock.execute() 执行每个操作
-        for(uint256 i = 0; i < proposal.targets.length; i++) {
-            timelock.execute(
-                proposal.targets[i],
-                proposal.values[i],
-                proposal.calldatas[i],
-                bytes32(0),
-                bytes32(0)
-            );
-        }
+        // for(uint256 i = 0; i < proposal.targets.length; i++) {
+        //     timelock.execute(
+        //         proposal.targets[i],
+        //         proposal.values[i],
+        //         proposal.calldatas[i],
+        //         bytes32(0),
+        //         bytes32(0)
+        //     );
+        // }
+        // ✅ 改进: 用 executeBatch 原子执行所有操作
+        timelock.executeBatch(
+            proposal.targets,
+            proposal.values,
+            proposal.calldatas,
+            bytes32(0),     // predecessor
+            bytes32(0)      // salt
+        );
 
         // CEI: 外部调用成功后再标记为已执行
         proposal.executed = true;
@@ -549,12 +572,12 @@ contract Governor {
     function _getTimelockId(Proposal storage proposal) internal view returns (bytes32) {
         // 取第一个操作来检查 Timelock 状态
         if (proposal.targets.length == 0) return bytes32(0);
-        return timelock.hashOperation(
-            proposal.targets[0],
-            proposal.values[0],
-            proposal.calldatas[0],
-            bytes32(0),
-            bytes32(0)
+        return timelock.hashOperationBatch(
+            proposal.targets,
+            proposal.values,
+            proposal.calldatas,
+            bytes32(0),     // predecessor
+            bytes32(0)      // salt
         );
     }
 
@@ -583,6 +606,32 @@ contract Governor {
             p.abstainVotes,
             stateOf(proposalId)
         );     
+    }
+
+    /**
+     * @notice 获取提案的预计执行时间（ETA）
+     * @dev 前端用这个展示倒计时
+     * @return eta 秒级 Unix 时间戳，0 表示未排队
+     */
+    function getProposalEta(uint256 proposalId) public view returns (uint256) {
+        Proposal storage proposal = _proposals[proposalId];
+        if (proposal.endBlock == 0) revert Governor__InvalidProposalId(proposalId);
+
+        bytes32 timelockId = _getTimelockId(proposal);
+        if (timelockId == 0) return 0;
+
+        // 如果操作已执行，返回 0
+        if (timelock.isOperationDone(timelockId)) return 0;
+
+        // 如果已过期，返回 0
+        if (timelock.isOperationExpired(timelockId)) return 0;
+
+        // try-catch 处理未排队的情况
+        try timelock.getTimestamp(timelockId) returns (uint256 timestamp) {
+            return timestamp;
+        } catch {
+            return 0;
+        }
     }
 
     /**
