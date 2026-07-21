@@ -14,17 +14,18 @@ const BEACON_SLOT =
 
 describe("🔬 EIP1967Explainer — EIP-1967 存储槽原理深度解析", function () {
     // ==================== 变量声明 ====================
-    let owner: any;
+    let owner: any, user1: any;
     let explainer: any;
+
+    // ==================== Setup ====================
+    before(async function () {
+        [owner, user1] = await ethers.getSigners();
+        explainer = await ethers.deployContract("EIP1967Explainer");
+    });
 
     // ==================== A. 部署 ====================
     describe("A. 部署", function () {
-        it("A1. 应该成功部署 EIP1967Explainer", async function () {
-            [owner, user1] = await ethers.getSigners();
-
-            explainer = await ethers.deployContract("EIP1967Explainer");
-
-            // 初始状态：所有 EIP-1967 槽应该为 0
+        it("A1. 初始状态：所有 EIP-1967 槽应该为 0", async function () {
             expect(await explainer.getImplementation()).to.equal(
                 ethers.ZeroAddress
             );
