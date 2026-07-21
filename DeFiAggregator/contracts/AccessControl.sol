@@ -91,7 +91,7 @@ contract AccessControl {
      */
     function revokeRole(bytes32 role, address account) external onlyOwner nonZero(account) {
         if (!hasRole(role, account)) {
-            revert RoleAlreadyGranted(role, account);
+            revert RoleNotGranted(role, account);
         }
         if (account == msg.sender) {
             revert CannotRevokeSelf(msg.sender);
