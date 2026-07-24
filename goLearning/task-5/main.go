@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github/seeli/task5/channel"
 	"github/seeli/task5/downloader"
+	"github/seeli/task5/enhanced"
 	"github/seeli/task5/goroutine"
 	"github/seeli/task5/workpool"
 )
@@ -28,4 +29,10 @@ func main() {
 	downloader.Demo()
 
 	fmt.Println("\n=== Day 33 学习完成! ===")
+
+	fmt.Println()
+	// Part E: Day 34 — 增强版 Worker Pool
+	enhanced.Demo()
+
+	fmt.Println("\n=== Day 33 + Day 34 学习完成! ===")
 }
