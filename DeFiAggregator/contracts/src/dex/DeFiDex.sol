@@ -65,10 +65,13 @@ contract DeFiDex is ERC20, Ownable, ReentrancyGuard {
     // 手续费常量: 0.3%
     // 公式: amountIn * 997 / 1000 = 扣除 0.3% 后的实际入账
     uint256 public constant FEE_NUMERATOR = 997;
-    uint256 public constant FEE_DONOMINATOR = 1000;
+    uint256 public constant FEE_DENOMINATOR = 1000;
 
     // 最小流动性（防止粉尘攻击，初始 LP 会被锁一部分）
     uint256 public constant MINIMUM_LIQUIDITY = 1000;
+
+    // UQ112x112 定点数精度因子（2^112），用于 TWAP 价格累加
+    uint256 private constant Q112 = 5192296858534827628530496329220096; // 2^112
 
     // ============ 手续费追踪 ============
     uint256 public accumulatedFee0; // token0 的累积手续费
@@ -152,7 +155,7 @@ contract DeFiDex is ERC20, Ownable, ReentrancyGuard {
         //     amountOut = (reserveOut * amountIn * 997) / (reserveIn * 1000 + amountIn * 997)
         uint256 amountInWithFee = amountIn * FEE_NUMERATOR;
         uint256 numerator = amountInWithFee * reserveOut;
-        uint256 denominator = reserveIn * FEE_DONOMINATOR + amountInWithFee;
+        uint256 denominator = reserveIn * FEE_DENOMINATOR + amountInWithFee;
 
         amountOut = numerator / denominator;
 
@@ -160,7 +163,7 @@ contract DeFiDex is ERC20, Ownable, ReentrancyGuard {
         if (amountOut < minAmountOut) revert InsufficientOutputAmount();
 
         // 6. 计算手续费（在更新 reserve 之前计算）
-        uint256 fee = amountIn - (amountIn * FEE_NUMERATOR / FEE_DONOMINATOR);
+        uint256 fee = amountIn - (amountIn * FEE_NUMERATOR / FEE_DENOMINATOR);
 
         // 7. 更新储备量 + 预言机（注意：不能直接修改 reserve，_update 会统一设置）
         uint256 newReserve0;
@@ -199,7 +202,7 @@ contract DeFiDex is ERC20, Ownable, ReentrancyGuard {
 
         uint256 amountInWithFee = amountIn * FEE_NUMERATOR;
         uint256 numerator = amountInWithFee * reserveOut;
-        uint256 denominator = reserveIn * FEE_DONOMINATOR + amountInWithFee;
+        uint256 denominator = reserveIn * FEE_DENOMINATOR + amountInWithFee;
 
         amountOut = numerator / denominator;
     }
@@ -216,7 +219,7 @@ contract DeFiDex is ERC20, Ownable, ReentrancyGuard {
 
         // 反向公式: amountIn = (reserveIn * amountOut * 1000) / ((reserveOut - amountOut) * 997) + 1
         // +1 是因为整数除法向下取整，需要确保足够支付
-        uint256 numerator = reserveIn * amountOut * FEE_DONOMINATOR;
+        uint256 numerator = reserveIn * amountOut * FEE_DENOMINATOR;
         uint256 denominator = (reserveOut - amountOut) * FEE_NUMERATOR;
         amountIn = numerator / denominator + 1;
     }
@@ -247,8 +250,8 @@ contract DeFiDex is ERC20, Ownable, ReentrancyGuard {
             // ⭐ 价格累加 = 现货价格 × 时间间隔
             // price0 = reserve1 / reserve0 (1 token0 = ? token1)
             // 乘以 2**112 精度防止精度丢失（UQ112x112 定点数）
-            price0CumulativeLast += (reserve1 * (2 ** 112) / reserve0) * timeElapsed;
-            price1CumulativeLast += (reserve0 * (2 ** 112) / reserve1) * timeElapsed;
+            price0CumulativeLast += (reserve1 * (Q112) / reserve0) * timeElapsed;
+            price1CumulativeLast += (reserve0 * (Q112) / reserve1) * timeElapsed;
         }
 
         blockTimestampLast = blockTimestamp;
@@ -405,7 +408,7 @@ contract DeFiDex is ERC20, Ownable, ReentrancyGuard {
 
             // 用 amount1 swap token0（在扣除后的池子里换）
             // swap 公式: amountOut = (reserveOut * amountIn * 997) / (reserveIn * 1000 + amountIn * 997)
-            uint256 swapOut = (newReserve0 * amount1 * FEE_NUMERATOR) / (newReserve1 * FEE_DONOMINATOR + amount1 * FEE_NUMERATOR);
+            uint256 swapOut = (newReserve0 * amount1 * FEE_NUMERATOR) / (newReserve1 * FEE_DENOMINATOR + amount1 * FEE_NUMERATOR);
 
             // ⭐ 修复: 防止 swapOut 超过池子中的 token0 余额
             if (swapOut > newReserve0) {
@@ -419,14 +422,14 @@ contract DeFiDex is ERC20, Ownable, ReentrancyGuard {
             _update(newReserve0 - swapOut, newReserve1 + amount1);
 
             // 更新手续费（swap 部分产生了手续费）
-            uint256 swapFee = amount1 - (amount1 * FEE_NUMERATOR / FEE_DONOMINATOR);
+            uint256 swapFee = amount1 - (amount1 * FEE_NUMERATOR / FEE_DENOMINATOR);
             accumulatedFee1 += swapFee;
         } else {
             // tokenOut == token1: 把 token0 部分 swap 成 token1
             uint256 newReserve0 = reserve0 - amount0;
             uint256 newReserve1 = reserve1 - amount1;
 
-            uint256 swapOut = (newReserve1 * amount0 * FEE_NUMERATOR) / (newReserve0 * FEE_DONOMINATOR + amount0 * FEE_NUMERATOR);
+            uint256 swapOut = (newReserve1 * amount0 * FEE_NUMERATOR) / (newReserve0 * FEE_DENOMINATOR + amount0 * FEE_NUMERATOR);
 
             // ⭐ 修复
             if (swapOut > newReserve1) {
@@ -436,7 +439,7 @@ contract DeFiDex is ERC20, Ownable, ReentrancyGuard {
             amountOut = amount1 + swapOut;
             _update(newReserve0 + amount0, newReserve1 - swapOut);
 
-            uint256 swapFee = amount0 - (amount0 * FEE_NUMERATOR / FEE_DONOMINATOR);
+            uint256 swapFee = amount0 - (amount0 * FEE_NUMERATOR / FEE_DENOMINATOR);
             accumulatedFee0 += swapFee;
         }
 
@@ -498,14 +501,14 @@ contract DeFiDex is ERC20, Ownable, ReentrancyGuard {
 
         // 同时返回 1e18 精度的价格（方便前端直接用）
         // 把 UQ112x112 转成 1e18: twap * 1e18 / 2^112
-        priceRaw = (twap * 1e18) / (2 ** 112);
+        priceRaw = (twap * 1e18) / (Q112);
     }
 
     /// @notice 查询 token1 在一段时间内的 TWAP
     function queryTWAP1(uint256 priceCumulativeStart, uint256 priceCumulativeEnd, uint32 timeElapsed) public view returns (uint256 twap, uint256 priceRaw) {
         if (timeElapsed == 0 || reserve0 == 0 || reserve1 == 0) return (0, 0);
         twap = (priceCumulativeEnd - priceCumulativeStart) / timeElapsed;
-        priceRaw = (twap * 1e18) / (2 ** 112);
+        priceRaw = (twap * 1e18) / (Q112);
     }
 
     /// @notice 快照当前价格累积值 + 时间戳（供 TWAP 查询使用）
@@ -538,8 +541,8 @@ contract DeFiDex is ERC20, Ownable, ReentrancyGuard {
         uint256 _twap1Row = (price1CumulativeLast - cumul1Start) / elapsed;
 
         // 转成 1e18 精度方便使用
-        twap0 = (_twap0Row * 1e18) / (2 ** 112);
-        twap1 = (_twap1Row * 1e18) / (2 ** 112);
+        twap0 = (_twap0Row * 1e18) / (Q112);
+        twap1 = (_twap1Row * 1e18) / (Q112);
     }
 
     // ============ 辅助函数 ============

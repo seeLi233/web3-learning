@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: SEE LICENSE IN LICENSE
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -436,7 +436,7 @@ contract DeFiLending is Ownable, ReentrancyGuard {
         // Step 6: 转账（只扣除实际还款金额，safeTransferFrom 不会多扣）
         IERC20(asset).safeTransferFrom(msg.sender, address(this), repayAmount);
 
-        emit Repaid(msg.sender, asset, amount);
+        emit Repaid(msg.sender, asset, repayAmount);
     }
 
     // ============ 清算 ============
