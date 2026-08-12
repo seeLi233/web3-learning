@@ -1,0 +1,193 @@
+# ============ Workflow 元信息 ============
+
+# 为什么 deploy 单独一个 Workflow 而不是和 build-push 合并？
+# → 关注点分离：构建和部署是两个独立操作。构建是"做菜"，部署是"上菜"。
+#    合并的话，构建失败部署也跑不了；分开的话，部署出问题不用重新构建
+#    而且部署应该是手动触发的（需要人确认），构建可以自动触发
+name: Deploy to K8s
+
+# ============ 触发器 ============
+
+# 为什么用 workflow_dispatch 手动触发？
+# → 部署到服务器是一个"有风险"的操作——可能影响线上用户。
+#    应该由开发者/运维在确认"现在可以部署"后手动点按钮触发
+#    workflow_dispatch 在 GitHub Actions 页面上显示一个 "Run workflow" 按钮
+# 作用：不会自动执行，必须人工在 GitHub UI 上触发
+on:
+    workflow_dispatch:
+        # 为什么加 inputs？
+        # → 让部署者在触发时可以选择参数：部署哪个环境的哪个服务、用什么镜像版本
+        #    这比每次部署都要改 YAML 文件灵活得多
+        inputs:
+            environment:
+                description: "部署目标环境"
+                required: true
+                type: choice
+                options:
+                    - dev           # 开发环境 → go-project-test namespace
+                    - prod          # 生产环境 → go-project namespace
+                default: dev
+            service:
+                description: "要部署的服务"
+                required: true
+                type: choice
+                options:
+                    - gateway-api   # API 网关
+                    - user-srv      # 用户服务
+                    - all           # 全部服务（含基础设施）
+                default: all
+            image-tag:
+                description: "镜像版本号（留空用 latest）"
+                required: false
+                type: string
+                default: "latest"
+
+# ============ 环境变量 ============
+
+# 为什么从 secrets 拼接镜像全名？
+# → username 不写死在代码里，方便不同人 fork 后用自己的 Docker Hub
+env:
+    REGISTRY: docker.io
+
+jobs:
+    deploy:
+        runs-on: ubuntu-latest
+
+        # ============ 部署前确认 ============
+
+        # 为什么用 environment 字段？
+        # → GitHub Environments 功能：可以设置保护规则——必须审批才能部署、限制只能从特定分支部署、
+        #    独立的 Secrets 命名空间等。dev 环境可以宽松，prod 环境必须审批
+        # 作用：把部署目标注册为 GitHub Environment，启用保护规则
+        environment:
+            name: ${{ github.event.inputs.environment }}
+            # 如果以后加了 prod 环境，在这里配置 required reviewers（必须有人审批才能部署）
+
+        steps:
+            # ============ Step 1: 拉代码（含 K8s manifest） ============
+
+            # 为什么 deploy 也要 checkout？
+            # → 需要 deploy/k8s/ 目录下的 K8s YAML 文件来 apply 基础设施（MySQL、Redis、Consul 等）
+            - uses: actions/checkout@v4
+
+            # ============ Step 2: 计算部署参数 + 打印信息 ============
+
+            # 为什么把所有变量集中在这一个 Step 计算？
+            # → (1) 作为审计日志，记录"谁在什么时候部署了什么版本"
+            # → (2) 将计算结果通过 $GITHUB_OUTPUT 传递给后续 SSH Step，避免在 script 块内
+            #     嵌套 ${{ }} 表达式（IDE/YAML linter 经常误报这些为语法错误）
+            - name: Prepare deploy variables
+              id: vars
+              run: |
+                # 根据环境映射 K8s namespace
+                if [ "${{ github.event.inputs.environment }}" = "prod" ]; then
+                  K8S_NS="go-project"
+                else
+                  K8S_NS="go-project-test"
+                fi
+
+                # 镜像全名前缀（不含 tag）
+                REG="${{ env.REGISTRY }}/${{ secrets.DOCKER_USERNAME }}"
+
+                # 输出到 $GITHUB_OUTPUT，后续 Step 通过 ${{ steps.vars.outputs.xxx }} 引用
+                echo "k8s-namespace=${K8S_NS}" >> $GITHUB_OUTPUT
+                echo "image-tag=${{ github.event.inputs.image-tag }}" >> $GITHUB_OUTPUT
+                echo "service=${{ github.event.inputs.service }}" >> $GITHUB_OUTPUT
+                echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+                echo "registry=${REG}" >> $GITHUB_OUTPUT
+
+                # 打印审计日志
+                echo "========================================="
+                echo "部署环境:     ${K8S_NS}"
+                echo "部署服务:     ${{ github.event.inputs.service }}"
+                echo "镜像版本:     ${{ github.event.inputs.image-tag }}"
+                echo "Registry:     ${REG}"
+                echo "触发者:       ${{ github.actor }}"
+                echo "触发时间:     $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+                echo "Commit:       ${{ github.sha }}"
+                echo "========================================="
+
+            # ============ Step 3: K8s 部署（SSH） ============
+
+            # 为什么用 SSH 方式操作 K8s？
+            # → 开发环境的 K8s API Server 通常不暴露公网（安全考虑），
+            #    通过 SSH 进入服务器执行 kubectl 是最简单安全的方式
+            #    如果 K8s API Server 有公网 IP + TLS 认证，可以改用 azure/setup-kubectl + kubeconfig secret
+            - name: Deploy to K8s via SSH
+              uses: appleboy/ssh-action@v1
+              # 为什么用 env + envs 传变量而不是在 script 中写 ${{ }}？
+              # → step 级 env 把变量注入 Runner 环境，envs 参数告诉 SSH Action 把
+              #    这些变量转发到远程 shell。script 中直接用 $VAR 引用即可
+              #    避免 IDE linter 误报 script 块内 ${{ }} 为语法错误
+              env:
+                NAMESPACE: ${{ steps.vars.outputs.k8s-namespace }}
+                IMAGE_TAG: ${{ steps.vars.outputs.image-tag }}
+                SERVICE: ${{ steps.vars.outputs.service }}
+                REGISTRY: ${{ steps.vars.outputs.registry }}
+              with:
+                host: ${{ secrets.DEV_HOST }}
+                username: ${{ secrets.DEV_USER }}
+                key: ${{ secrets.DEV_SSH_KEY }}
+                port: ${{ secrets.DEV_SSH_PORT || 22 }}
+                envs: NAMESPACE,IMAGE_TAG,SERVICE,REGISTRY
+
+                # ============ K8s 部署脚本 ============
+                #
+                # 所有变量（$NAMESPACE, $IMAGE_TAG, $SERVICE, $REGISTRY）已通过 envs 注入
+                #
+                # 为什么用 kubectl set image 而不是 kubectl apply？
+                # → apply 用 YAML 文件里的 image 字段（通常是 latest），无法精确控制版本
+                #    set image 可以动态指定版本号，实现精确的版本控制和回滚
+                #
+                # 为什么用 rollout status？
+                # → 等待 Pod 滚动更新完成，CrashLoopBackOff 等问题会及时发现并报错
+                script: |
+                    # 设置 kubeconfig（k3s 默认路径；kubeadm/microk8s 请相应修改）
+                    export KUBECONFIG=${KUBECONFIG:-/etc/rancher/k3s/k3s.yaml}
+
+                    echo "Target: namespace=$NAMESPACE, tag=$IMAGE_TAG"
+                    echo ""
+
+                    # ====== 部署基础设施（仅 all 模式） ======
+                    if [ "$SERVICE" = "all" ]; then
+                      echo "Deploying infrastructure (MySQL + Redis + Consul + Secrets)..."
+                      kubectl apply -f deploy/k8s/namespace.yaml
+                      kubectl apply -f deploy/k8s/mysql-secret.yaml
+                      kubectl apply -f deploy/k8s/mysql-secret-test.yaml
+                      kubectl apply -f deploy/k8s/user-srv-secret.yaml
+                      kubectl apply -f deploy/k8s/user-srv-secret-test.yaml
+                      kubectl apply -f deploy/k8s/mysql.yaml
+                      kubectl apply -f deploy/k8s/redis.yaml
+                      kubectl apply -f deploy/k8s/consul.yaml
+                      echo "Infrastructure applied."
+                      echo ""
+                    fi
+
+                    # ====== 部署 user-srv ======
+                    if [ "$SERVICE" = "all" ] || [ "$SERVICE" = "user-srv" ]; then
+                      echo "Deploying user-srv (version: $IMAGE_TAG)..."
+                      kubectl set image deployment/user-srv \
+                        user-srv=${REGISTRY}/user-srv:${IMAGE_TAG} \
+                        -n $NAMESPACE
+                      kubectl rollout status deployment/user-srv -n $NAMESPACE --timeout=120s
+                      echo "user-srv deployed."
+                      echo ""
+                    fi
+
+                    # ====== 部署 gateway-api ======
+                    if [ "$SERVICE" = "all" ] || [ "$SERVICE" = "gateway-api" ]; then
+                      echo "Deploying gateway-api (version: $IMAGE_TAG)..."
+                      kubectl set image deployment/gateway-api \
+                        gateway-api=${REGISTRY}/gateway-api:${IMAGE_TAG} \
+                        -n $NAMESPACE
+                      kubectl rollout status deployment/gateway-api -n $NAMESPACE --timeout=120s
+                      echo "gateway-api deployed."
+                      echo ""
+                    fi
+
+                    # ====== 最终状态检查 ======
+                    echo "Current Pod status:"
+                    kubectl get pods -n $NAMESPACE -o wide
+
+                    echo ""
+                    echo "Deploy done! Namespace: $NAMESPACE | Version: $IMAGE_TAG"

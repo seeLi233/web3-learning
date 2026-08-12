@@ -1,0 +1,80 @@
+# ============ Workflow 元信息 ============
+
+# 为什么叫 "Go CI" 而不是 "Go Lint and Test"？
+# → CI 是业界通用术语，团队成员一看就知道这是检查代码质量的流水线
+# 作用：给 Workflow 一个人类可读的名字，显示在 GitHub Actions 页面上
+name: GO CI
+
+# ============ 触发器 ============
+
+# 为什么 push + pull_request 都触发？
+# → push 保护当前分支质量（每次提交都检查），pull_request 保护 main 分支（合并前再检查一次）
+#    双重保险确保坏代码进不了 main。如果只配 PR，开发分支上的提交不会自动检查
+# 作用：定义什么事件自动触发这个 Workflow
+on:
+    push:
+        branches: [main]    # 往 main push 时触发
+    pull_request:
+        branches: [main]    # 往 main 提 PR 时触发
+
+# ============ Job 定义 ============
+
+jobs:
+    # 为什么叫 lint-and-test 而不是拆成两个 Job？
+  # → lint 和 test 共享同一个 Go 环境（setup-checkout），合并为一个 Job 减少 Runner 启动开销
+  #    如果 lint 和 test 都很慢（>5min），才考虑拆成并行 Job
+  # 作用：定义一个在 ubuntu-latest 虚拟机上执行的任务
+  lint-and-test:
+    # 为什么用 ubuntu-latest？
+    # → GitHub 免费提供 ubuntu Runners，且 Go 是跨平台编译的，Lint/测试在 ubuntu 上跑和在本地跑结果一致
+    runs-on: ubuntu-latest
+
+    steps:
+        # ============ Step 1: 拉代码 ============
+
+        # 为什么 checkout 必须是第一步？
+        # → 所有后续操作（lint、test、build）都需要源码。Runner 初始状态是一个空虚拟机，什么文件都没有
+        # 作用：把当前仓库的最新代码 clone 到 Runner 的 $GITHUB_WORKSPACE 目录
+        - uses: actions/checkout@v4
+
+        # ============ Step 2: 安装 Go ============
+
+        # 为什么用 setup-go 而不是手动 apt-get install golang？
+        # → setup-go 自动处理版本管理、GOPATH 配置、缓存 GOROOT，不用自己写 10 行脚本
+        # 作用：在 Runner 上安装指定版本的 Go，设置好环境变量
+        - uses: actions/setup-go@v5
+          with:
+            go-version: "1.21"      # 为什么定死 1.21 而不是 "stable"？
+                                    # → "stable" 会在 Go 发布新版本时自动升级，可能引入不兼容变更
+                                    #    定死版本号保证 CI 环境和本地开发环境一致——"我机器上能跑，CI 也能跑"
+        
+        # ============ Step 3: Lint ============
+
+        # 为什么用 golangci-lint-action 而不是手动装 golangci-lint？
+        # → 官方 Action 自动管理版本、缓存 lint 结果、格式化 GitHub PR 上的 lint 输出
+        # 作用：扫描代码中的错误、风格问题、潜在 bug（等于 Go 代码的"语法纠错老师"）
+        - name: golangci-lint
+          uses: golangci/golangci-lint-action@v6
+          with:
+            version: latest         # 用最新版 linter 规则（社区更新快，新规则能发现新问题）
+        
+        # ============ Step 4: 运行测试 ============
+
+        # 为什么 -count=1 禁用测试缓存？
+        # → CI 的职责是"每次从头验证"，如果读缓存，上次通过的测试这次可能用缓存直接跳过，失去了 CI 的意义
+        # 为什么 -coverprofile 输出覆盖率？
+        # → 覆盖率文件可以上传为 CI Artifact，也能对接 Codecov/Coveralls 生成 badge 和趋势图
+        - name: Run tests
+          run: go test ./... -v -count=1 -coverprofile=coverage.out
+        
+        # ============ Step 5: 上传覆盖率文件 ============
+
+        # 为什么上传覆盖率？
+        # → CI Runner 执行完就销毁了，coverage.out 也跟着消失。上传为 Artifact 后可以在 GitHub 页面上
+        #    下载查看，也能被后续 Job（如 Codecov 上传 Job）消费
+        # 作用：保存覆盖率文件，在 GitHub Actions 运行记录中可下载
+        - name: Upload coverage
+          uses: actions/upload-artifact@v4
+          with:
+            name: coverage      # Artifact 显示名称
+            path: coverage.out  # 要上传的文件路径
