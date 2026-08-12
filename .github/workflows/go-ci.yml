@@ -63,15 +63,21 @@ jobs:
               with:
                 version: latest
                 working-directory: ${{ env.WORK_DIR }}
+                # 为什么显式指定模块目录而不是用 ./...？
+                # → Go workspace 模式下 ./... 只匹配包含模块的目录
+                #    go.work 里的模块都是子目录，./... 会报 "does not contain modules"
+                #    必须逐个列出模块路径
+                args: ./common/... ./gateway-api/... ./user-srv/... ./order-srv/... ./pay-srv/... ./product-srv/... ./promotion-srv/...
 
             # ============ Step 4: 运行测试 ============
 
+            # 为什么显式列出模块路径而不是用 ./...？
+            # → Go workspace 模式下 ./... 不匹配子目录中的模块
+            #    必须逐个列出 go.work 中声明的模块路径
             # 为什么 -count=1 禁用测试缓存？
-            # → CI 的职责是"每次从头验证"，如果读缓存，上次通过的测试这次可能用缓存跳过
-            # 为什么 -coverprofile 输出覆盖率？
-            # → 覆盖率文件可以上传为 CI Artifact，也能对接 Codecov/Coveralls 生成 badge
+            # → CI 的职责是"每次从头验证"
             - name: Run tests
-              run: go test ./... -v -count=1 -coverprofile=coverage.out
+              run: go test ./common/... ./gateway-api/... ./user-srv/... ./order-srv/... ./pay-srv/... ./product-srv/... ./promotion-srv/... -v -count=1 -coverprofile=coverage.out
 
             # ============ Step 5: 上传覆盖率文件 ============
 
