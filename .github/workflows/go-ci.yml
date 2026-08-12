@@ -54,7 +54,10 @@ jobs:
             - name: golangci-lint
               uses: golangci/golangci-lint-action@v6
               with:
-                version: latest
+                # 为什么指定 v1.64 而不是 latest？
+                # → golangci-lint v2 改变了配置格式（version:"2", linters.settings 等）
+                #    .golangci.yml 还是 v1 格式，钉住版本避免被 v2 breaking changes 影响
+                version: v1
                 working-directory: ${{ env.WORK_DIR }}
                 # 为什么显式指定模块目录而不是用 ./...？
                 # → Go workspace 模式下 ./... 只匹配包含模块的目录
