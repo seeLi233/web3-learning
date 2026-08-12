@@ -44,9 +44,7 @@ jobs:
             #    本地升级 Go 版本后 CI 自动跟进，不用手动改 YAML
             - uses: actions/setup-go@v5
               with:
-                go-version-file: ${{ env.WORK_DIR }}/gateway-api/go.mod
-                # 如果 go.mod 里的版本尚未被 setup-go 支持，
-                # 可以临时写死一个可用版本：go-version: "1.23"
+                go-version: "1.24"
 
             # ============ Step 3: Lint ============
 
