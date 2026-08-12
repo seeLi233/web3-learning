@@ -1,6 +1,6 @@
 module github.com/go-project-learning/project/gateway-api
 
-go 1.26.4
+go 1.24
 
 require (
 	github.com/gin-gonic/gin v1.12.0
