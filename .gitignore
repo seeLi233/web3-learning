@@ -1,2 +1,36 @@
+# ==================== Claude Code ====================
+.claude/
+
+# ==================== Go ====================
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+vendor/
+
+# ==================== IDE ====================
+.idea/
+.vscode/
+
+# ==================== OS ====================
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ==================== 环境变量 ====================
+.env
+.env.*
+!.env.example
+
+# ==================== 日志 & 临时文件 ====================
+*.log
+tmp/
+temp/
+
+# ==================== 项目特定 ====================
 dappLearning/task-1/counter-interaction/.env
 dappLearning/task-3/solana-go-project/config/wallet-keypair.json

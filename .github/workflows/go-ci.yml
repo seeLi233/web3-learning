@@ -1,0 +1,82 @@
+# ============ Workflow 元信息 ============
+
+# 为什么叫 "Go CI" 而不是 "Go Lint and Test"？
+# → CI 是业界通用术语，团队成员一看就知道这是检查代码质量的流水线
+# 作用：给 Workflow 一个人类可读的名字，显示在 GitHub Actions 页面上
+name: Go CI
+
+# ============ 触发器 ============
+
+# 为什么 push + pull_request 都触发？
+# → push 保护当前分支质量（每次提交都检查），pull_request 保护 main 分支（合并前再检查一次）
+#    双重保险确保坏代码进不了 main。如果只配 PR，开发分支上的提交不会自动检查
+# 作用：定义什么事件自动触发这个 Workflow
+on:
+    push:
+        branches: [main]
+        # 只在 Go 项目目录有变更时才触发，避免 Solidity 项目改动浪费 Go CI 分钟数
+        paths:
+            - "goLearning/go-project-learning/**"
+    pull_request:
+        branches: [main]
+        paths:
+            - "goLearning/go-project-learning/**"
+
+# ============ 环境变量 ============
+
+env:
+    # 为什么用 working-directory 而不是每个 Step 写 cd？
+    # → monorepo 根目录是 web3-learning，Go 项目在 goLearning/go-project-learning/
+    #    working-directory 让所有 run 命令自动在此目录下执行
+    WORK_DIR: goLearning/go-project-learning
+
+jobs:
+    lint-and-test:
+        runs-on: ubuntu-latest
+        # 所有 run 命令默认在此目录下执行
+        defaults:
+            run:
+                working-directory: ${{ env.WORK_DIR }}
+
+        steps:
+            # ============ Step 1: 拉代码 ============
+            - uses: actions/checkout@v4
+
+            # ============ Step 2: 安装 Go ============
+
+            # 为什么用 go-version-file 而不是写死版本号？
+            # → go-version-file 读取 go.work 中的 go 版本声明，自动匹配本地开发环境
+            #    本地升级 Go 版本后 CI 自动跟进，不用手动改 YAML
+            - uses: actions/setup-go@v5
+              with:
+                go-version-file: ${{ env.WORK_DIR }}/gateway-api/go.mod
+                # 如果 go.mod 里的版本尚未被 setup-go 支持，
+                # 可以临时写死一个可用版本：go-version: "1.23"
+
+            # ============ Step 3: Lint ============
+
+            # 为什么用 golangci-lint-action 而不是手动装 golangci-lint？
+            # → 官方 Action 自动管理版本、缓存 lint 结果、格式化 GitHub PR 上的 lint 输出
+            # 作用：扫描代码中的错误、风格问题、潜在 bug
+            - name: golangci-lint
+              uses: golangci/golangci-lint-action@v6
+              with:
+                version: latest
+                working-directory: ${{ env.WORK_DIR }}
+
+            # ============ Step 4: 运行测试 ============
+
+            # 为什么 -count=1 禁用测试缓存？
+            # → CI 的职责是"每次从头验证"，如果读缓存，上次通过的测试这次可能用缓存跳过
+            # 为什么 -coverprofile 输出覆盖率？
+            # → 覆盖率文件可以上传为 CI Artifact，也能对接 Codecov/Coveralls 生成 badge
+            - name: Run tests
+              run: go test ./... -v -count=1 -coverprofile=coverage.out
+
+            # ============ Step 5: 上传覆盖率文件 ============
+
+            - name: Upload coverage
+              uses: actions/upload-artifact@v4
+              with:
+                name: go-coverage
+                path: ${{ env.WORK_DIR }}/coverage.out

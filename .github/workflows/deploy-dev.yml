@@ -1,0 +1,146 @@
+# ============ Workflow 元信息 ============
+
+# 为什么 deploy 单独一个 Workflow 而不是和 build-push 合并？
+# → 关注点分离：构建是"做菜"，部署是"上菜"
+#    部署应该是手动触发的（需要人确认），构建可以自动触发
+name: Deploy to K8s (Go)
+
+# ============ 触发器 ============
+
+# 为什么用 workflow_dispatch 手动触发？
+# → 部署是有风险的操作——可能影响线上用户，应由开发者在确认后手动触发
+on:
+    workflow_dispatch:
+        inputs:
+            environment:
+                description: "部署目标环境"
+                required: true
+                type: choice
+                options:
+                    - dev           # 开发环境 → go-project-test namespace
+                    - prod          # 生产环境 → go-project namespace
+                default: dev
+            service:
+                description: "要部署的服务"
+                required: true
+                type: choice
+                options:
+                    - gateway-api   # API 网关
+                    - user-srv      # 用户服务
+                    - all           # 全部服务（含基础设施）
+                default: all
+            image-tag:
+                description: "镜像版本号（留空用 latest）"
+                required: false
+                type: string
+                default: "latest"
+
+env:
+    REGISTRY: docker.io
+    WORK_DIR: goLearning/go-project-learning
+    # K8s manifest 目录（相对于 monorepo 根目录）
+    K8S_DIR: goLearning/go-project-learning/deploy/k8s
+
+jobs:
+    deploy:
+        runs-on: ubuntu-latest
+
+        environment:
+            name: ${{ github.event.inputs.environment }}
+
+        steps:
+            - uses: actions/checkout@v4
+
+            # ============ 计算部署参数 + 打印审计日志 ============
+            - name: Prepare deploy variables
+              id: vars
+              run: |
+                if [ "${{ github.event.inputs.environment }}" = "prod" ]; then
+                  K8S_NS="go-project"
+                else
+                  K8S_NS="go-project-test"
+                fi
+
+                REG="${{ env.REGISTRY }}/${{ secrets.DOCKER_USERNAME }}"
+
+                echo "k8s-namespace=${K8S_NS}" >> $GITHUB_OUTPUT
+                echo "image-tag=${{ github.event.inputs.image-tag }}" >> $GITHUB_OUTPUT
+                echo "service=${{ github.event.inputs.service }}" >> $GITHUB_OUTPUT
+                echo "registry=${REG}" >> $GITHUB_OUTPUT
+
+                echo "========================================="
+                echo "Deploy Env:     ${K8S_NS}"
+                echo "Service:        ${{ github.event.inputs.service }}"
+                echo "Image Tag:      ${{ github.event.inputs.image-tag }}"
+                echo "Registry:       ${REG}"
+                echo "Triggered by:   ${{ github.actor }}"
+                echo "Time (UTC):     $(date -u '+%Y-%m-%d %H:%M:%S')"
+                echo "Commit:         ${{ github.sha }}"
+                echo "========================================="
+
+            # ============ K8s 部署（SSH） ============
+            - name: Deploy to K8s via SSH
+              uses: appleboy/ssh-action@v1
+              # env 设置 Runner 环境变量，envs 指定转发到远程 shell 的变量列表
+              env:
+                NAMESPACE: ${{ steps.vars.outputs.k8s-namespace }}
+                IMAGE_TAG: ${{ steps.vars.outputs.image-tag }}
+                SERVICE: ${{ steps.vars.outputs.service }}
+                REGISTRY: ${{ steps.vars.outputs.registry }}
+                K8S_DIR: ${{ env.K8S_DIR }}
+              with:
+                host: ${{ secrets.DEV_HOST }}
+                username: ${{ secrets.DEV_USER }}
+                key: ${{ secrets.DEV_SSH_KEY }}
+                port: ${{ secrets.DEV_SSH_PORT || 22 }}
+                envs: NAMESPACE,IMAGE_TAG,SERVICE,REGISTRY,K8S_DIR
+
+                script: |
+                    export KUBECONFIG=${KUBECONFIG:-/etc/rancher/k3s/k3s.yaml}
+
+                    echo "Target: namespace=$NAMESPACE, tag=$IMAGE_TAG"
+                    echo ""
+
+                    # ====== 部署基础设施（仅 all 模式） ======
+                    if [ "$SERVICE" = "all" ]; then
+                      echo "Deploying infrastructure (MySQL + Redis + Consul + Secrets)..."
+                      kubectl apply -f ${K8S_DIR}/namespace.yaml
+                      kubectl apply -f ${K8S_DIR}/mysql-secret.yaml
+                      kubectl apply -f ${K8S_DIR}/mysql-secret-test.yaml
+                      kubectl apply -f ${K8S_DIR}/user-srv-secret.yaml
+                      kubectl apply -f ${K8S_DIR}/user-srv-secret-test.yaml
+                      kubectl apply -f ${K8S_DIR}/mysql.yaml
+                      kubectl apply -f ${K8S_DIR}/redis.yaml
+                      kubectl apply -f ${K8S_DIR}/consul.yaml
+                      echo "Infrastructure applied."
+                      echo ""
+                    fi
+
+                    # ====== 部署 user-srv ======
+                    if [ "$SERVICE" = "all" ] || [ "$SERVICE" = "user-srv" ]; then
+                      echo "Deploying user-srv (version: $IMAGE_TAG)..."
+                      kubectl set image deployment/user-srv \
+                        user-srv=${REGISTRY}/user-srv:${IMAGE_TAG} \
+                        -n $NAMESPACE
+                      kubectl rollout status deployment/user-srv -n $NAMESPACE --timeout=120s
+                      echo "user-srv deployed."
+                      echo ""
+                    fi
+
+                    # ====== 部署 gateway-api ======
+                    if [ "$SERVICE" = "all" ] || [ "$SERVICE" = "gateway-api" ]; then
+                      echo "Deploying gateway-api (version: $IMAGE_TAG)..."
+                      kubectl set image deployment/gateway-api \
+                        gateway-api=${REGISTRY}/gateway-api:${IMAGE_TAG} \
+                        -n $NAMESPACE
+                      kubectl rollout status deployment/gateway-api -n $NAMESPACE --timeout=120s
+                      echo "gateway-api deployed."
+                      echo ""
+                    fi
+
+                    # ====== 最终状态检查 ======
+                    echo "Current Pod status:"
+                    kubectl get pods -n $NAMESPACE -o wide
+
+                    echo ""
+                    echo "Deploy done! Namespace: $NAMESPACE | Version: $IMAGE_TAG"
