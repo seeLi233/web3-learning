@@ -1,0 +1,99 @@
+// 1. 必须第一行：声明使用 proto3 语法
+syntax = "proto3";
+
+// 2. 包名：防止命名冲突（企业规范：服务名.版本）
+package order.v1;
+
+// 3. 核心！生成 Go 代码的配置
+// 格式：go_package = "生成的Go文件路径;包名"
+option go_package = "./api/order/v1;orderv1";
+
+// ------------------------------
+// 4. 定义【订单数据结构】= Go 结构体
+// ------------------------------
+message Order {
+  int64 id = 1;       // 用户ID
+  string order_number = 2;    // 用户名
+  double amount = 3;      // 年龄
+  int32 status = 4;   // 邮箱
+  int64 user_id =5; // 关联用户ID
+  string created_at = 6; //创建时间
+}
+
+// ------------------------------
+// 4. 定义【订单项数据结构】= Go 结构体
+// ------------------------------
+message OrderItem {
+    int64 id = 1;
+    int64 order_id = 2;
+    int64 product_id = 3;
+    int32 count = 4;
+    double price = 5;
+}
+
+// ------------------------------
+// 5. 定义【接口请求/响应结构体】
+// ------------------------------
+
+// 创建订单
+message CreateOrderRequest {
+  int64 user_id = 1; // 只传用户ID
+  repeated OrderItem items = 2; // 订单项列表
+}
+
+message CreateOrderResponse {
+    int32 code = 1;
+    string msg = 2;
+    Order data = 3;
+}
+
+// 查询订单列表
+message ListOrderRequest {
+    int64 user_id = 1;
+    int32 page = 2;
+    int32 size = 3;
+}
+
+message ListOrderResponse {
+    int32 code = 1;
+    string msg = 2;
+    repeated Order data = 3;
+}
+
+// 查询订单
+message GetOrderRequest {
+    int64 id = 1;
+}
+
+message GetOrderResponse {
+    int32 code = 1;
+    string msg = 2;
+    Order data = 3;
+}
+
+// 支付订单
+message PayOrderRequest {
+    int64 id = 1;
+}
+
+message PayOrderResponse {
+    int32 code = 1;
+    string msg = 2;
+}
+
+// ------------------------------
+// 6. 定义【订单服务接口】
+// ------------------------------
+service OrderService {
+  // 支付订单
+  rpc PayOrder(PayOrderRequest) returns (PayOrderResponse);
+
+  // 创建订单
+  rpc CreateOrder(CreateOrderRequest) returns (CreateOrderResponse);
+
+  // 获取订单列表
+  rpc ListOrder(ListOrderRequest) returns (ListOrderResponse);
+
+  // 获取订单
+  rpc GetOrder(GetOrderRequest) returns (GetOrderResponse);
+}

@@ -1,0 +1,27 @@
+setup.config.permissions.enabled: false
+
+filebeat.inputs:
+- type: filestream
+  enabled: true
+  paths:
+    - /host/logs/*.log # 监控 Go 应用日志
+
+  # 解析 JSON 日志
+  parsers:
+    - ndjson:
+      overwrite_keys: true # 如果日志中有重复字段，覆盖原有值
+      add_error_key: true # 解析错误时添加 error 字段
+  
+  # 多行合并：处理 Go panic 堆栈日志
+  multiline.type: pattern
+  multiline.pattern: '^\d{4}-\d{2}-\d{2}'
+  multiline.negate: true
+  multiline.match: after
+
+# 输出到 Logstash
+output.logstash:
+  hosts: ["logstash:5044"] # Logstash 服务地址
+
+# 关闭内置 Kibanna 配置
+setup.kibana:
+  enabled: false

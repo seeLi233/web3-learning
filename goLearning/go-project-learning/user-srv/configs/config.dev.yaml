@@ -1,0 +1,53 @@
+server:
+  name: "Go Project Learning"
+  port: 8080
+  log_level: "debug"
+
+mysql:
+  host: 127.0.0.1
+  port: 3307        # Docker MySQL 映射到宿主机 3307
+  username: root
+  password: 123456
+  dbname: userdb
+  charset: utf8mb4
+
+redis:
+  host: 127.0.0.1
+  port: 6380        # Docker Redis 映射到宿主机 6380
+  db: 0
+  password: ""
+  pool_size: 10
+
+rabbitmq:
+  host: 127.0.0.1
+  port: 5672
+  username: admin
+  password: admin123
+
+consul:
+  host: 127.0.0.1
+  port: 8501        # Docker Consul 映射到宿主机 8501
+
+jaeger:
+  host: 127.0.0.1
+  port: 4318        # Docker Jaeger OTLP 映射到宿主机 4318
+
+jwt:
+  secret: "dev-secret-key-change-in-prod"
+  access_expire: 7200
+  refresh_expire: 604800
+  issuer: "go-project-dev"
+
+sms:
+  provider: "dev"              # dev 模式只打印日志，不真实发送
+  access_key: ""
+  secret_key: ""
+  sign_name: "Go 学习项目"
+  template: "SMS_123456"
+
+smtp:
+  host: "smtp.qq.com"
+  port: 465
+  username: "your@qq.com"
+  password: "your-smtp-password"
+  from: "your@qq.com"

@@ -1,0 +1,40 @@
+server:
+  name: "user-srv-svc"
+  port: 50051
+  log_level: "info"
+
+mysql:
+  host: mysql-svc
+  port: 3306
+  username: root
+  password: "123456"
+  dbname: userdb_test
+  charset: utf8mb4
+
+redis:
+  host: redis-svc
+  port: 6379
+  db: 0
+  password: ""
+  pool_size: 10
+
+consul:
+  host: consul-svc
+  port: 8500
+
+jaeger:
+  host: jaeger-svc
+  port: 4317
+
+jwt:
+  secret: "k8s-test-secret"   # 必须和 gateway-api 的 config.test.yaml 一致
+  access_expire: 7200
+  refresh_expire: 604800
+  issuer: "go-project-test"
+
+sms:
+  provider: "dev"              # dev 模式只打印日志，不真实发送
+  access_key: ""
+  secret_key: ""
+  sign_name: "Go 学习项目"
+  template: "SMS_123456"

@@ -1,0 +1,52 @@
+server:
+  name: "user-service"
+  port: 50051
+  log_level: "info"
+
+mysql:
+  host: mysql-svc        # 容器名
+  port: 3306
+  username: root
+  password: 123456
+  dbname: go_project_learning
+  charset: utf8mb4
+
+redis:
+  host: redis-svc      # 容器名
+  port: 6379
+  db: 0
+  password: ""
+  pool_size: 10
+
+consul:
+  host: consul-svc
+  port: 8500
+
+jaeger:
+  host: jaeger-svc         # 如果暂时不部署 Jaeger，可以先留空
+  port: 4317
+
+jwt:
+  secret: "k8s-prod-secret-change-me"   # 必须和 gateway-api 的 config.prod.yaml 一致
+  access_expire: 3600
+  refresh_expire: 604800
+  issuer: "go-project-prod"
+
+sms:
+  provider: "dev"              # 生产环境改为 aliyun 并填入真实密钥
+  access_key: ""
+  secret_key: ""
+  sign_name: "Go 学习项目"
+  template: "SMS_123456"
+
+smtp:
+  host: "smtp.qq.com"
+  port: 465
+  username: ""
+  password: ""
+  from: ""
+
+# 关键知识点：
+#   - K8s 中同 Namespace 的 Pod 之间可以通过 <Service名> 直接访问（DNS 解析）
+#   - 比如 mysql-svc 会自动解析到 MySQL Pod 的 ClusterIP
+#   - 这就是为什么 docker-compose 里用容器名 mysql，K8s 里用 Service 名 mysql-svc

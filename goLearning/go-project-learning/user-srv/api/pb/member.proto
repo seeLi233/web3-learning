@@ -1,0 +1,148 @@
+syntax = "proto3";
+
+package user.v1;
+
+option go_package = "./api/pb;pb";
+
+message MemberLevel {
+    int64 id = 1;
+    string level_name = 2; // 等级名称： 普通会员/银卡/金卡/钻石
+    int32 level_value = 3; // 等级值： 0/1/2/3
+    int32 min_growth = 4; // 最低成长值门槛
+    int32 max_growth = 5; // 最高成长值 （-1表示无上限）
+    double discount = 6; // 折扣率 0.95 = 九五折
+    string icon = 7; // 等级图标 URL
+    string description = 8; // 等级描述
+}
+
+message MemberInfo {
+    int64 id = 1;
+    int64 user_id = 2;
+    int64 level_id = 3;
+    int32 growth_value = 4;
+    int32 total_growth = 5;
+    string level_up_time = 6; // 最近升级时间
+    MemberLevel level = 7; // 关联等级信息
+}
+
+// 成长值变动日志
+message GrowthLog {
+    int64 id = 1;
+    int64 user_id = 2;
+    int32 change_value = 3; // 变动值 （正 = 增长， 负 = 减少）
+    string source_type = 4; // 来源： order/review/signin/ admin
+    string source_id = 5; // 来源 ID
+    string description = 6; // 变动说明
+    string created_at = 7; // 变动时间
+}
+
+// ========================================
+// 请求/响应结构体
+// ========================================
+
+// ---------- 获取会员信息 ----------
+message GetMemberInfoRequest {
+    int64 user_id = 1;
+}
+
+message GetMemberInfoResponse {
+    int32 code = 1;
+    string msg = 2;
+    MemberInfo member = 3;
+}
+
+// ---------- 增加成长值 ----------
+message AddGrowthRequest {
+    int64 user_id = 1;
+    int32 growth = 2; // 成长值（正数）
+    string source_type = 3; // 来源类型
+    string source_id = 4; // 来源ID
+    string description = 5; // 来源说明
+}
+
+message AddGrowthResponse {
+    int32 code = 1;
+    string msg = 2;
+    MemberInfo member = 3; // 返回更新后的会员信息
+}
+
+// ---------- 扣减成长值（管理员/退款场景） ----------
+message DeductGrowthRequest {
+    int64 user_id = 1;
+    int32 growth = 2; // 要扣减的成长值（正数，内部转负）
+    string source_type = 3; 
+    string source_id = 4;
+    string description = 5;
+}
+
+message DeductGrowthResponse {
+    int32 code = 1;
+    string msg = 2;
+    MemberInfo member = 3; // 返回更新后的会员信息
+}
+
+// ---------- 获取成长值变动日志 ----------
+message GetGrowthLogsRequest {
+    int64 user_id = 1;
+    int32 page = 2; // 页码
+    int32 size = 3; // 每页条数
+}
+
+message GetGrowthLogsResponse {
+    int32 code = 1;
+    string msg = 2;
+    repeated GrowthLog data = 3;
+    int32 total = 4; // 总条数
+}
+
+// ---------- 获取会员权益列表 ----------
+message GetMemberBenefitsRequest {
+    int64 user_id = 1;
+}
+
+message Benefit {
+    string name = 1; // 权益名称
+    string description = 2; // 权益描述
+    string icon = 3; // 权益图标
+}
+
+message GetMemberBenefitsResponse {
+    int32 code = 1;
+    string msg = 2;
+    repeated Benefit data = 3; // 权益列表
+}
+
+// ---------- 获取所有等级配置（含当前用户高亮） ----------
+message ListMemberLevelsRequest {
+    int64 user_id = 1;
+}
+
+message ListMemberLevelsResponse {
+    int32 code = 1;
+    string msg = 2;
+    repeated MemberLevel data = 3;
+    int32 current_level = 4; // 当前用户等级值
+}
+
+// ========================================
+// 服务定义
+// ========================================
+service MemberService {
+    // 获取用户会员信息
+    rpc GetMemberInfo(GetMemberInfoRequest) returns (GetMemberInfoResponse);
+
+    // 增加成长值
+    rpc AddGrowth(AddGrowthRequest) returns (AddGrowthResponse);
+
+    // 扣减成长值
+    rpc DeductGrowth(DeductGrowthRequest) returns (DeductGrowthResponse);
+
+    // 获取成长值变动日志
+    rpc GetGrowthLogs(GetGrowthLogsRequest) returns (GetGrowthLogsResponse);
+
+    // 获取会员权益
+    rpc GetMemberBenefits(GetMemberBenefitsRequest) returns (GetMemberBenefitsResponse);
+
+    // 获取所有等级配置
+    rpc ListMemberLevels(ListMemberLevelsRequest) returns (ListMemberLevelsResponse);
+}

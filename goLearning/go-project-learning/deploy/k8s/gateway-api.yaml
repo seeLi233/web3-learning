@@ -1,0 +1,77 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gateway-api-config
+  namespace: go-project
+data:
+  config.prod.yaml: |
+    server:
+      port: 8080
+    user_srv:
+      host: user-srv
+      port: 50051
+    jwt:
+      # TODO: 生产环境务必替换为强随机密钥，并从 Secret 注入
+      secret: "k8s-prod-secret-change-me"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway-api
+  namespace: go-project
+  labels:
+    app: gateway-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: gateway-api
+  template:
+    metadata:
+      labels:
+        app: gateway-api
+    spec:
+      containers:
+        - name: gateway-api
+          # 镜像说明：本地开发用 gateway-api:latest（docker build 本地构建）
+          # CI/CD 部署时 kubectl set image 会覆盖为 docker.io/username/gateway-api:v1.0.0
+          # 所以这里的值只是本地开发的默认值，生产部署由 CD workflow 控制版本
+          image: gateway-api:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: ENV
+              value: "prod"
+          volumeMounts:
+            - name: config-volume
+              mountPath: /app/configs/config.prod.yaml
+              subPath: config.prod.yaml
+          # 资源限制：防止 Pod 无限制吃资源影响同节点其他服务
+          # requests: K8s 调度器保证至少分这么多资源才调度此 Pod
+          # limits: Pod 最多能用的资源上限，超过 CPU 被限速，超过内存被 OOMKill
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+      volumes:
+        - name: config-volume
+          configMap:
+            name: gateway-api-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway-api-svc
+  namespace: go-project
+spec:
+  type: NodePort
+  selector:
+    app: gateway-api
+  ports:
+    - port: 8080
+      targetPort: 8080
+      nodePort: 30080

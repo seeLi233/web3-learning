@@ -1,0 +1,43 @@
+# ============================================================
+# Prometheus 抓取配置
+#
+# 两种部署模式（二选一）：
+#
+# 【本地 Docker 开发】
+#   - 启动 Prometheus 容器，挂载此文件
+#   - 使用 static_configs → host.docker.internal
+#   - 命令见下方 "Docker 模式" 注释块
+#
+# 【K8s 测试/生产】
+#   - 不使用此文件
+#   - 使用 deploy/k8s/prometheus-test.yaml（ConfigMap 内嵌 scrape 配置）
+#   - K8s 内通过 Service DNS 名称找到 Pod
+# ============================================================
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # ========== Job 1: Gateway API（HTTP 入口层） ==========
+  - job_name: "gateway-api"
+    metrics_path: "/metrics"
+    static_configs:
+      # Docker 环境用 host.docker.internal，本地开发用 127.0.0.1
+      - targets: ["host.docker.internal:8080"]
+        labels:
+          service: "gateway-api"
+          env: "dev"
+
+  # ========== Job 2: User gRPC Service（gRPC 服务层） ==========
+  # user-srv 的 metrics 在 8082 端口（gRPC 用 50051 端口跑业务）
+  # 为什么两个端口？
+  # → gRPC 走 HTTP/2 + protobuf，Prometheus 只能抓 HTTP/1.1 纯文本 /metrics
+  #    所以额外开 8082 专门给 Prometheus 抓
+  - job_name: "user-srv"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["host.docker.internal:8082"]
+        labels:
+          service: "user-srv"
+          env: "dev"

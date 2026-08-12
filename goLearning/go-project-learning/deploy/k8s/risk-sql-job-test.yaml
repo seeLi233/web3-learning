@@ -1,0 +1,91 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: risk-sql-test
+  namespace: go-project-test
+data:
+  01-risk-configs.sql: |
+    -- 确保表存在
+    CREATE TABLE IF NOT EXISTS `risk_configs` (
+        `id`          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        `created_at`  DATETIME(3) DEFAULT NULL,
+        `updated_at`  DATETIME(3) DEFAULT NULL,
+        `deleted_at`  DATETIME(3) DEFAULT NULL,
+        `rule_key`    VARCHAR(50) NOT NULL,
+        `rule_value`  VARCHAR(100) NOT NULL,
+        `description` VARCHAR(255),
+        `status`      BOOLEAN,
+        UNIQUE KEY `idx_rule_key` (`rule_key`),
+        INDEX `idx_deleted_at` (`deleted_at`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+    -- 插入风控配置
+    INSERT INTO risk_configs (rule_key, rule_value, description, status, created_at, updated_at)
+    VALUES ('register_ip_limit', '3', '同IP 10分钟内最多注册次数', 1, NOW(), NOW())
+    ON DUPLICATE KEY UPDATE rule_value='3', description='同IP 10分钟内最多注册次数', updated_at=NOW();
+
+    INSERT INTO risk_configs (rule_key, rule_value, description, status, created_at, updated_at)
+    VALUES ('register_time_window', '600', '注册时间窗口(秒)', 1, NOW(), NOW())
+    ON DUPLICATE KEY UPDATE rule_value='600', description='注册时间窗口(秒)', updated_at=NOW();
+
+    INSERT INTO risk_configs (rule_key, rule_value, description, status, created_at, updated_at)
+    VALUES ('login_max_attempts', '5', '登录失败最大次数', 1, NOW(), NOW())
+    ON DUPLICATE KEY UPDATE rule_value='5', description='登录失败最大次数', updated_at=NOW();
+
+    INSERT INTO risk_configs (rule_key, rule_value, description, status, created_at, updated_at)
+    VALUES ('lock_duration', '900', '锁定时长(秒)', 1, NOW(), NOW())
+    ON DUPLICATE KEY UPDATE rule_value='900', description='锁定时长(秒)', updated_at=NOW();
+
+  02-ip-blacklists.sql: |
+    -- 确保表存在
+    CREATE TABLE IF NOT EXISTS `ip_blacklists` (
+        `id`          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        `created_at`  DATETIME(3) DEFAULT NULL,
+        `updated_at`  DATETIME(3) DEFAULT NULL,
+        `deleted_at`  DATETIME(3) DEFAULT NULL,
+        `ip`          VARCHAR(45) NOT NULL,
+        `source`      VARCHAR(50),
+        `reason`      VARCHAR(200),
+        `user_id`     BIGINT,
+        `status`      BOOLEAN,
+        `deadline`    DATETIME(3) DEFAULT NULL,
+        INDEX `idx_ip` (`ip`),
+        INDEX `idx_deleted_at` (`deleted_at`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+---
+# 2. Job - 执行 SQL
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: risk-sql-init-test
+  namespace: go-project-test
+spec:
+  template:
+    spec:
+      containers:
+        - name: mysql-client
+          image: mysql:8.0
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              echo "开始执行风控配置 SQL..."
+              for f in /sql/*.sql; do
+                echo "执行: $f"
+                mysql -h mysql-svc -uroot -p123456 userdb_test < "$f"
+                if [ $? -eq 0 ]; then
+                  echo "成功: $f"
+                else
+                  echo "失败: $f"
+                  exit 1
+                fi
+              done
+              echo "所有 SQL 执行完成"
+          volumeMounts:
+            - name: sql-volume
+              mountPath: /sql
+      volumes:
+        - name: sql-volume
+          configMap:
+            name: risk-sql-test
+      restartPolicy: Never
+  backoffLimit: 3

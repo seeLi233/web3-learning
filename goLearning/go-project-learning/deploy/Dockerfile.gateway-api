@@ -1,0 +1,139 @@
+# ===================================================================
+# 多阶段构建：gateway-api（API 网关）
+#
+# 阶段 1 (builder)：用 golang 镜像编译 Go 源码 → 产出 Linux 二进制
+# 阶段 2 (runtime)：用 alpine 镜像只跑二进制 → 最终镜像 ~25MB
+#
+# 为什么是两个阶段？
+# → golang 镜像 ~300MB（含编译器、Git、工具链），alpine 镜像 ~7MB
+#    用多阶段构建，最终镜像只要 alpine + 二进制 + 配置 = ~25MB
+#    省掉 275MB 的编译器垃圾，同时减少攻击面（没有编译器 = 不能编译恶意代码）
+# ===================================================================
+
+# ==================== 阶段 1：编译 (Builder) ====================
+
+# 为什么用 golang:1.26-alpine 而不是 golang:latest？
+# → alpine 变体比完整版小 ~90%（~80MB vs ~800MB），且 go mod download 快得多
+#    AS builder 给这阶段命名，后面 COPY --from=builder 要用
+FROM golang:1.26-alpine AS builder
+
+# 为什么 ARG 放 FROM 之后？
+# → ARG 的作用域是当前构建阶段。放 FROM 前面是全局 ARG，放这里是阶段内 ARG
+# 作用：允许构建时覆盖 Go 代理地址（国内网络用 goproxy.cn 加速依赖下载）
+ARG GOPROXY=https://proxy.golang.org,direct
+
+# 为什么只装 git 和 ca-certificates？
+# → git：go mod download 拉私有仓库依赖时需要
+#   ca-certificates：下载 HTTPS 依赖时验证 SSL 证书
+#   不装 gcc/make 等 → 因为我们用 CGO_ENABLED=0，不需要 C 编译器
+# --no-cache 的作用：不缓存 apk 索引文件（~2MB），减少层大小
+RUN apk add --no-cache git ca-certificates
+
+# 为什么 WORKDIR 是 /app 而不是 /build 或根目录 /？
+# → 约定俗成：/app 是应用根目录。统一用 /app 避免 COPY 路径混乱
+WORKDIR /app
+
+# ===== 依赖缓存层（关键优化！）=====
+# 为什么先复制 go.mod/go.sum 并下载依赖，而不是直接 COPY . .？
+# → Docker 的层缓存机制：
+#    如果 go.mod/go.sum 没变 → 这一层命中缓存 → go mod download 跳过
+#    如果 go.mod/go.sum 变了 → 这一层重建 → 重新下载依赖
+#
+# 如果把 COPY . . 放前面，你改一行注释代码 → 缓存失效 → 重新下载所有依赖
+# 现在改业务代码不影响依赖层 → 构建从 3 分钟降到 5 秒（热构建）
+#
+# 为什么还要复制 common/ 和 user-srv/ 的 go.mod？
+# → go-project-learning 用 Go Workspace（go.work），gateway-api 引用 common/ 本地模块
+#   go mod download 需要解析 go.mod 中的 replace 指令 → 需要所有被引用的模块的 go.mod
+COPY common/go.mod common/go.sum ./common/
+COPY user-srv/go.mod user-srv/go.sum ./user-srv/
+COPY gateway-api/go.mod gateway-api/go.sum ./gateway-api/
+
+# 为什么切 WORKDIR 而不是在 COPY 时指定路径？
+# → go mod download 必须在模块目录下运行（读到 go.mod），切目录是最清晰的方式
+WORKDIR /app/gateway-api
+
+# 为什么设置 GOPROXY 环境变量？
+# → 从 ARG 转换成 ENV，go mod download 运行时读取
+#   设置 CGO_ENABLED=0 防止 go mod download 触发 C 依赖下载
+#   设置 GOOS=linux 确保下载 Linux 平台的依赖（交叉编译场景）
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    GOPROXY=${GOPROXY} CGO_ENABLED=0 GOOS=linux \
+    go mod download
+
+# ===== 源码复制 + 编译层 =====
+# 为什么切回 /app？
+# → 因为 COPY 的源路径是相对于 context（项目根目录 .），不是 WORKDIR
+#   WORKDIR=/app 时，COPY common/ ../common/ 的目标路径就是 /app/common/
+WORKDIR /app
+
+# 为什么先复制 common 和 user-srv，最后复制 gateway-api？
+# → 遵循"最不常变的先复制"原则：
+#   common/ 改动频率 < user-srv/ 改动频率 < gateway-api/ 改动频率
+#   这样 gateway-api 改代码时，前面的 COPY 层全部缓存命中
+COPY common/ ./common/
+COPY user-srv/ ./user-srv/
+COPY gateway-api/ ./gateway-api/
+
+# 为什么切到 gateway-api 目录编译？
+# → go build 需要在模块根目录运行（找到 go.mod）
+WORKDIR /app/gateway-api
+
+# 为什么用这些编译参数？
+# CGO_ENABLED=0    → 禁用 CGO，编译纯静态二进制（不依赖 glibc）→ 可在 Alpine (musl) 上运行
+# GOOS=linux       → 指定目标操作系统（你在 Windows 上开发，但目标是 Linux 容器）
+# -ldflags="-s -w" → 链接器标志：
+#   -s：去掉符号表（symbol table），减小 ~20%
+#   -w：去掉 DWARF 调试信息，减小 ~10%
+#   合计减小 ~30%，且无法用 dlv 调试（生产环境不需要调试）
+# -o gateway-api   → 指定输出文件名（默认是目录名 gateway-api，显式写更清晰）
+# ./cmd/api/main.go → 入口文件路径
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux \
+    go build -ldflags="-s -w" -o gateway-api ./cmd/api/main.go
+
+# ==================== 阶段 2：运行 (Runtime) ====================
+
+# 为什么是 alpine:latest 而不是 scratch？
+# → scratch 是空镜像（0MB），但缺少：
+#   - /etc/passwd（需要非 root 用户）
+#   - /etc/ssl/certs（HTTPS 调用外部 API）
+#   - 时区文件（日志时间正确）
+#   - shell（调试时 docker exec 进不去）
+#   权衡后选 alpine（~7MB），而非 scratch（不可调试）或 debian（~100MB）
+FROM alpine:latest
+
+# 为什么只装 ca-certificates 和 tzdata？
+# → ca-certificates：HTTPS 请求验证 SSL 证书（gateway 调用下游 gRPC 服务时可能需要 TLS）
+#   tzdata：时区数据，让日志时间显示 Asia/Shanghai 而不是 UTC
+#   --no-cache：同上，不缓存 apk 索引
+RUN apk add --no-cache ca-certificates tzdata
+
+# 为什么设置时区？
+# → 默认容器时间是 UTC，日志里出现"凌晨 3 点"实际是北京时间上午 11 点，排查问题令人困惑
+ENV TZ=Asia/Shanghai
+
+WORKDIR /app
+
+# 为什么从 builder 阶段只复制二进制？
+# → 这就是多阶段构建的核心价值：
+#   golang:alpine (~300MB) → 丢掉！
+#   只把编译好的二进制（~18MB）复制过来
+#   最终镜像 = alpine (~7MB) + 二进制 (~18MB) + 配置 (~KB) ≈ 27MB
+COPY --from=builder /app/gateway-api/gateway-api .
+
+# 为什么复制 configs/ 目录？
+# → Go 应用通常在 configs/ 下放 YAML 配置文件（数据库连接、服务端口等）
+#   COPY 整个目录而不是单个文件——以后加配置文件不用改 Dockerfile
+#   注意：敏感信息（密码）不放配置文件，用环境变量注入
+COPY gateway-api/configs/ ./configs/
+
+# EXPOSE 的作用：文档化——告诉读 Dockerfile 的人"这个容器监听 8080 端口"
+# 注意：EXPOSE 不实际发布端口——发布端口是 docker run -p 或 compose ports: 控制的
+EXPOSE 8080
+
+# 为什么用 CMD 而不是 ENTRYPOINT？
+# → CMD：提供默认命令，docker run 时可以覆盖（灵活）
+#   ENTRYPOINT：硬编码启动命令，docker run 时只能追加参数
+#   这里用 CMD 更灵活——比如 docker run ... /bin/sh 进容器调试
+CMD ["./gateway-api"]

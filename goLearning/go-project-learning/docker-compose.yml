@@ -1,0 +1,213 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: go-mysql
+    restart: always
+    ports:
+      - "3307:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: 123456   #  root 密码
+      MYSQL_DATABASE: userdb        # 自动创建的库
+      TZ: Asia/Shanghai
+    volumes:
+      - mysql_data:/var/lib/mysql   # 数据持久化
+    command: --default-authentication-plugin=mysql_native_password
+
+  postgres:
+    image: postgres:17
+    container_name: go-postgres
+    restart: always
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: task10
+      TZ: Asia/Shanghai
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: go-myredis
+    restart: always
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_data:/data # 数据持久化（重启不丢）
+    command: redis-server --appendonly yes # 开启持久化
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: go-myrabbitmq
+    ports:
+      - "5672:5672"   # Go 代码连接端口 ( AMQP 协议)
+      - "15672:15672" # Web 管理界面窗口
+    environment:
+      RABBITMQ_DEFAULT_USER: admin       #默认用户名
+      RABBITMQ_DEFAULT_PASS: admin123    #默认密码
+      RABBITMQ_DEFAULT_VHOST: /          #默认虚拟主机
+    volumes:
+      - ./rabbitmq/data:/var/lib/rabbitmq #持久化数据 （重启不丢）
+    restart: always
+
+  consul:
+    image: hashicorp/consul:latest
+    container_name: go-myconsul
+    # 映射端口：8500（UI/HTTP)、8300（集群通道）
+    ports:
+      - "8501:8500"
+      - "8301:8300"
+    # 启动参数: dev 开发模式 + 允许外网访问 UI
+    command: agent -dev -client=0.0.0.0
+    volumes:
+      - ./consul-data:/consul/data
+    restart: always
+
+  #Elasticsearch:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.0
+    container_name: go-myelasticsearch
+    environment:
+      - discovery.type=single-node
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ports:
+      - "9201:9200" # HTTP 端口
+      - "9301:9300" # 集群通信端口
+    volumes:
+      - ./elasticsearch-data:/usr/share/elasticsearch/data # 数据持久化（重启不丢）
+    restart: always
+
+  # Kibana:
+  kibana:
+    image: docker.elastic.co/kibana/kibana:7.17.0
+    container_name: go-mykibana
+    ports:
+      - "5602:5601" # HTTP 端口
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200 # 连接 Elasticsearch
+    depends_on:
+      - elasticsearch
+    restart: always
+  
+  # Logstash:
+  logstash:
+    image: docker.elastic.co/logstash/logstash:7.17.0
+    container_name: go-mylogstash
+    user: root
+    ports:
+      - "5045:5044" # Beats 输入端口
+      - "9601:9600" # API 端口
+    volumes:
+      #- ./logstash/config:/usr/share/logstash/config # 配置文件目录
+      - ./configs/logstash/pipeline:/usr/share/logstash/pipeline:ro # 管道配置目录
+      - ./logs:/var/log/goapp:ro # 监控日志目录（映射宿主机日志到容器）
+    environment:
+      - "LS_JAVA_OPTS=-Xms256m -Xmx256m"
+    depends_on:
+      - elasticsearch
+    restart: always
+
+  # Filebeat:
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:7.17.0
+    container_name: go-myfilebeat
+    volumes:
+      # 挂载 Filebeat 配置
+      - ./configs/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro # 配置文件
+      # 挂载本地日志目录（关键：映射宿主机日志到容器）
+      - /temp/go-logs:/host/logs:ro # 监控 Go 应用日志
+      # 持久化采集偏移量，防止重复采集
+      - filebeat_data:/usr/share/filebeat/data # 采集偏移量持久化（重启不丢）
+      #- /var/lib/docker/containers:/var/lib/docker/containers:ro # 监控 Docker 日志
+    depends_on:
+      - logstash
+    restart: always
+
+  # Jaeger 全链路追踪（All-in-One）
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: go-myjaeger
+    ports:
+      - "6832:6831/udp" # Jaeger Agent 接收端口 (UDP)
+      - "16687:16686"   # Jaeger UI 端口
+      - "4318:4317"     # OTLP 接收端口 (gRPC)
+      - "4319:4318"     # OTLP 接收端口 (HTTP)
+    restart: always
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: go-myprometheus
+    ports:
+      - "9091:9090" # Prometheus UI 端口
+    volumes:
+      - ./configs/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro # Prometheus 配置文件
+      - prom_data:/prometheus # 数据持久化（重启不丢）
+    extra_hosts:
+      - "host.docker.internal:host-gateway" # 解决容器访问宿主机问题
+    restart: always
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: go-mygrafana
+    ports:
+      - "3001:3000" # Grafana UI 端口
+    volumes:
+      - grafana_data:/var/lib/grafana # 数据持久化（重启不丢）
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=123456 # Grafana admin 密码
+    depends_on:
+      - prometheus
+    restart: always
+
+  user-srv:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.user-srv
+    container_name: go-user-srv
+    ports:
+      - "50052:50051"
+    environment:
+      - ENV=docker
+      - POD_IP=127.0.0.1
+    depends_on:
+      - mysql
+      - redis
+      - consul
+    restart: always
+
+  gateway-api:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.gateway-api
+    container_name: go-gateway-api
+    ports:
+      - "8081:8080"
+    environment:
+      - ENV=docker
+    depends_on:
+      - user-srv
+    restart: always
+
+
+
+volumes:
+  mysql_data:
+  postgres_data:
+  redis_data:
+  rabbitmq_data:
+  consul_data:
+  elasticsearch_data:
+  filebeat_data:
+  logstash_data:
+  kibana_data:
+  jaeger_data:
+  prom_data:
+  grafana_data:

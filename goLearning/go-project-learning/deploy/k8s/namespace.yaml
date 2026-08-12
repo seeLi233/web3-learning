@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Namespace #知识点：kind 决定创建什么类型的资源。Namespace 是 K8s 的逻辑隔离单元。
+metadata:
+  name: go-project
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: go-project-test

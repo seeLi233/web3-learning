@@ -1,0 +1,104 @@
+# ============================================================
+# Prometheus — 指标采集 + 存储
+# 抓取 gateway-api(:8080) 和 user-srv(:8082) 的 /metrics
+# ============================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: go-project-test
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+
+    scrape_configs:
+      # ========== Job 1: Gateway API（HTTP 入口层） ==========
+      - job_name: "gateway-api"
+        scrape_interval: 5s
+        metrics_path: "/metrics"
+        static_configs:
+          - targets: ["gateway-api-svc.go-project-test.svc.cluster.local:8080"]
+            labels:
+              service: "gateway-api"
+              env: "test"
+
+      # ========== Job 2: User gRPC Service（gRPC 服务层） ==========
+      # 为什么两个端口？
+      # → gRPC 走 HTTP/2 + protobuf，Prometheus 只能抓 HTTP/1.1 纯文本 /metrics
+      #    所以额外开 8082 专门给 Prometheus 抓
+      - job_name: "user-srv"
+        scrape_interval: 5s
+        metrics_path: "/metrics"
+        static_configs:
+          - targets: ["user-srv.go-project-test.svc.cluster.local:8082"]
+            labels:
+              service: "user-srv"
+              env: "test"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: go-project-test
+  labels:
+    app: prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      containers:
+        - name: prometheus
+          image: prom/prometheus:latest
+          imagePullPolicy: Never
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--config.file=/etc/prometheus/prometheus.yml"
+            - "--storage.tsdb.path=/prometheus"
+            - "--storage.tsdb.retention.time=7d"          # 测试环境保留 7 天
+            - "--web.enable-lifecycle"                    # 允许热重载配置
+          ports:
+            - containerPort: 9090
+              name: web
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/prometheus
+              readOnly: true
+            - name: data-volume
+              mountPath: /prometheus
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+      volumes:
+        - name: config-volume
+          configMap:
+            name: prometheus-config
+        - name: data-volume
+          emptyDir: {}   # 测试环境用 emptyDir（Pod 重启数据丢失），生产环境改为 PVC
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus-svc
+  namespace: go-project-test
+  labels:
+    app: prometheus
+spec:
+  type: ClusterIP
+  selector:
+    app: prometheus
+  ports:
+    - port: 9090
+      targetPort: 9090
+      name: web

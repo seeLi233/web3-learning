@@ -1,0 +1,110 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: user-srv-config
+  namespace: go-project
+data:
+  config.prod.yaml: |
+    mysql:
+      host: mysql-svc
+      port: 3306
+      username: root
+      # ⚠️ 密码不应明文存 ConfigMap！生产环境请用 Secret 注入
+      # 该值会被 env MySQL_PASSWORD 覆盖（见 Deployment 中的 envFrom secretRef）
+      password: ""
+      dbname: userdb
+      charset: utf8mb4
+    redis:
+      host: redis-svc
+      port: 6379
+      db: 0
+      password: ""
+      pool_size: 10
+    consul:
+      host: consul-svc
+      port: 8500
+    jwt:
+      # ⚠️ JWT Secret 生产环境务必替换！已从 Secret 注入同名环境变量覆盖
+      secret: ""
+      access_expire: 3600
+      refresh_expire: 604800
+      issuer: "go-project-prod"
+    sms:
+      provider: "dev"
+      access_key: ""
+      secret_key: ""
+      sign_name: ""
+      template: ""
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-srv
+  namespace: go-project
+  labels:
+    app: user-srv
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: user-srv
+  template:
+    metadata:
+      labels:
+        app: user-srv
+    spec:
+      containers:
+        - name: user-srv
+          # 镜像说明：本地开发用 user-srv:latest（docker build 本地构建）
+          # CI/CD 部署时 kubectl set image 会覆盖为 docker.io/username/user-srv:v1.0.0
+          image: user-srv:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 50051
+          env:
+            - name: ENV
+              value: "prod"
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            # 从 Secret 注入敏感信息，覆盖 ConfigMap 中的空值
+            # Go 应用应优先读环境变量，环境变量未设置时回退到配置文件
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: user-srv-secret
+                  key: mysql-password
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: user-srv-secret
+                  key: jwt-secret
+          volumeMounts:
+            - name: config-volume
+              mountPath: /app/configs/config.prod.yaml
+              subPath: config.prod.yaml
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+      volumes:
+        - name: config-volume
+          configMap:
+            name: user-srv-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-srv
+  namespace: go-project
+spec:
+  selector:
+    app: user-srv
+  ports:
+    - port: 50051
+      targetPort: 50051
+  type: ClusterIP

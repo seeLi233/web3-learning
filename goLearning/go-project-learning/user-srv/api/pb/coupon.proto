@@ -1,0 +1,135 @@
+syntax = "proto3";
+
+package user.v1;
+
+option go_package = "./api/pb;pb";
+
+// 优惠券模板
+message CouponTemplate {
+    int64 id = 1;
+    string name = 2; // 优惠券名称
+    int32 type = 3; // 类型：1=满减券 2=折扣券 3=无门槛券
+    double discount_amount = 4; // 优惠金额（满减/无门槛）或折扣率（如0.85）
+    double min_amount = 5; // 最低消费金额（满减券门槛）
+    string start_time = 6; // 有效期开始
+    string end_time = 7; // 有效期结束
+    int32 total_count = 8; // 发放总量（-1=无限制）
+    int32 claimed_count = 9; // 已领取数量
+    int32 per_user_limit = 10; // 每人限领数量
+    int32 status = 11; // 状态：1=启用 0=禁用
+}
+
+// 用户优惠券
+message UserCoupon {
+    int64 id = 1;
+    int64 user_id = 2;
+    int64 template_id = 3;
+    int32 status = 4; // 状态：1=未使用 2=已使用 3=已过期
+    string claimed_at = 5; // 领取时间
+    string used_at = 6; // 使用时间
+    string order_id = 7; // 使用的订单ID
+    CouponTemplate template = 8; // 关联的模板信息
+}
+
+// ========================================
+// 请求/响应结构体
+// ========================================
+
+// ---------- 获取可领取的优惠券列表 ----------
+message ListCouponTemplatesRequest {
+    int32 page = 1; // 页码
+    int32 size = 2; // 每页条数
+}
+
+message ListCouponTemplatesResponse {
+    int32 code = 1;
+    string msg = 2;
+    repeated CouponTemplate data = 3;
+    int32 total = 4; // 总条数
+}
+
+// ---------- 领取优惠券 ----------
+message ClaimCouponRequest {
+    int64 user_id = 1;
+    int64 template_id = 2; // 优惠券模板ID
+}
+
+message ClaimCouponResponse {
+    int32 code = 1;
+    string msg = 2;
+    UserCoupon coupon = 3; // 返回领取的优惠券
+}
+
+// ---------- 获取我的优惠券列表 ----------
+message ListUserCouponsRequest {
+    int64 user_id = 1;
+    int32 status = 2; // 筛选状态：0=全部 1=未使用 2=已使用 3=已过期
+    int32 page = 3; // 页码
+    int32 size = 4; // 每页条数
+}
+
+message ListUserCouponsResponse {
+    int32 code = 1;
+    string msg = 2;
+    repeated UserCoupon data = 3;
+    int32 total = 4; // 总条数
+}
+
+// ---------- 获取可用优惠券（下单时筛选） ----------
+message GetAvailableCouponsRequest {
+    int64 user_id = 1;
+    double order_amount = 2; // 订单金额
+}
+
+message GetAvailableCouponsResponse {
+    int32 code = 1;
+    string msg = 2;
+    repeated UserCoupon data = 3; // 可用的优惠券列表
+}
+
+// ---------- 使用优惠券 ----------
+message UseCouponRequest {
+    int64 coupon_id = 1; // 用户优惠券ID
+    int64 user_id = 2;
+    string order_id = 3; // 订单ID
+}
+
+message UseCouponResponse {
+    int32 code = 1;
+    string msg = 2;
+}
+
+// ---------- 获取优惠券详情 ----------
+message GetCouponDetailRequest {
+    int64 coupon_id = 1; // 用户优惠券ID
+    int64 user_id = 2;
+}
+
+message GetCouponDetailResponse {
+    int32 code = 1;
+    string msg = 2;
+    UserCoupon coupon = 3;
+}
+
+// ========================================
+// 服务定义
+// ========================================
+service CouponService {
+    // 获取可领取的优惠券列表
+    rpc ListCouponTemplates(ListCouponTemplatesRequest) returns (ListCouponTemplatesResponse);
+
+    // 领取优惠券
+    rpc ClaimCoupon(ClaimCouponRequest) returns (ClaimCouponResponse);
+
+    // 获取我的优惠券列表
+    rpc ListUserCoupons(ListUserCouponsRequest) returns (ListUserCouponsResponse);
+
+    // 获取可用优惠券（下单时）
+    rpc GetAvailableCoupons(GetAvailableCouponsRequest) returns (GetAvailableCouponsResponse);
+
+    // 使用优惠券
+    rpc UseCoupon(UseCouponRequest) returns (UseCouponResponse);
+
+    // 获取优惠券详情
+    rpc GetCouponDetail(GetCouponDetailRequest) returns (GetCouponDetailResponse);
+}

@@ -1,0 +1,79 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: user-service-config
+  namespace: go-project
+data:
+  config.prod.yaml: |
+    mysql:
+      host: mysql-svc
+      port: 3306
+      username: root
+      password: "123456"
+      dbname: userdb
+      charset: utf8mb4
+    redis:
+      host: redis-svc
+      port: 6379
+      db: 0
+      password: ""
+      pool_size: 10
+    consul:
+      host: consul-svc
+      port: 8500
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+  namespace: go-project
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: user-service
+  template:
+    metadata:
+      labels:
+        app: user-service
+    spec:
+      containers:
+        - name: user-service
+          image: user-service:v1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 50051
+          env:
+            - name: ENV
+              value: "prod"
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          volumeMounts:
+            - name: config-volume
+              mountPath: /configs
+      volumes:
+        - name: config-volume
+          configMap:
+            name: user-service-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-service-svc
+  namespace: go-project
+spec:
+  selector:
+    app: user-service
+  ports:
+    - port: 50051
+      targetPort: 50051
+  type: ClusterIP
+
+# 知识点：
+#   - ConfigMap：把配置文件内容存为 K8s 资源，挂载到 Pod 的 /app/configs 目录，覆盖容器里原来的 configs
+#   - imagePullPolicy: Never：告诉 K8s 用本地镜像，不要去远程拉（因为我们是本地构建的）
+#   - ENV=prod：让 Viper 加载 config.prod.yaml（看 configs/config.go:66-69）
+#   - POD_IP + fieldRef：Downward API，K8s 自动把 Pod IP 注入这个环境变量
+#   - replicas: 2：运行 2 个副本，Service 自动在它们之间负载均衡

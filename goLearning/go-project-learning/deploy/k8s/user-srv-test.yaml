@@ -1,0 +1,117 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: user-srv-config
+  namespace: go-project-test
+data:
+  config.test.yaml: |
+    mysql:
+      host: mysql-svc
+      port: 3306
+      username: root
+      password: ""
+      dbname: userdb_test
+      charset: utf8mb4
+    redis:
+      host: redis-svc
+      port: 6379
+      db: 0
+      password: ""
+      pool_size: 10
+    consul:
+      host: consul-svc
+      port: 8500
+    jwt:
+      secret: ""
+      access_expire: 7200
+      refresh_expire: 604800
+      issuer: "go-project-test"
+    sms:
+      provider: "dev"
+      access_key: ""
+      secret_key: ""
+      sign_name: ""
+      template: ""
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-srv
+  namespace: go-project-test
+  labels:
+    app: user-srv
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: user-srv
+  template:
+    metadata:
+      labels:
+        app: user-srv
+    spec:
+      containers:
+        - name: user-srv
+          # 镜像说明：本地开发用 user-srv:latest + imagePullPolicy: IfNotPresent
+          # CI/CD 部署时 kubectl set image 会覆盖为 docker.io/username/user-srv:vX.Y.Z
+          image: user-srv:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 50051
+              name: grpc
+            - containerPort: 8082
+              name: metrics
+          env:
+            - name: ENV
+              value: "test"
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            # 从 Secret 注入敏感信息（覆盖 ConfigMap 中的空值）
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: user-srv-secret
+                  key: mysql-password
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: user-srv-secret
+                  key: jwt-secret
+          volumeMounts:
+            - name: config-volume
+              mountPath: /app/configs/config.test.yaml
+              subPath: config.test.yaml
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+      volumes:
+        - name: config-volume
+          configMap:
+            name: user-srv-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-srv
+  namespace: go-project-test
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8082"
+    prometheus.io/path: "/metrics"
+spec:
+  selector:
+    app: user-srv
+  ports:
+    - port: 50051
+      targetPort: 50051
+      name: grpc
+    - port: 8082
+      targetPort: 8082
+      name: metrics
+  type: ClusterIP

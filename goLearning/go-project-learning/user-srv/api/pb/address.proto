@@ -1,0 +1,92 @@
+syntax = "proto3";
+
+package user.v1;
+
+option go_package = "./api/pb;pb";
+
+message Address {
+    int64 id = 1;
+    int64 user_id = 2;
+    string receiver = 3;
+    string phone = 4;
+    string province = 5;
+    string city = 6;
+    string district = 7;
+    string detail = 8;
+    bool is_default = 9;
+}
+
+message CreateAddressRequest {
+    int64 user_id = 1;
+    string receiver = 2;
+    string phone = 3;
+    string province = 4;
+    string city = 5;
+    string district = 6;
+    string detail = 7;
+    bool is_default = 8;
+}
+
+message CreateAddressResponse {
+    int32 code = 1;
+    string msg = 2;
+    Address data = 3;
+}
+
+message GetAddressRequest {
+    int64 id = 1;
+}
+
+message GetAddressResponse {
+    int32 code = 1;
+    string msg = 2;
+    Address data = 3;
+}
+
+message ListAddressRequest {
+    int64 user_id = 1;
+}
+
+message ListAddressResponse {
+    int32 code = 1;
+    string msg = 2;
+    repeated Address data = 3;
+}
+
+message UpdateAddressRequest {
+    int64 id = 1;
+    string receiver = 2;
+    string phone = 3;
+    string province = 4;
+    string city = 5;
+    string district = 6;
+    string detail = 7;
+    bool is_default = 8;
+}
+
+message UpdateAddressResponse {
+    int32 code = 1;
+    string msg = 2;
+    Address data = 3;
+}
+
+message DeleteAddressRequest {
+    int64 id = 1;
+}
+
+message DeleteAddressResponse {
+    int32 code = 1;
+    string msg = 2;
+}
+
+service AddressService {
+    rpc CreateAddress(CreateAddressRequest) returns (CreateAddressResponse);
+
+    rpc GetAddress(GetAddressRequest) returns (GetAddressResponse);
+
+    rpc ListAddress(ListAddressRequest) returns (ListAddressResponse);
+
+    rpc UpdateAddress(UpdateAddressRequest) returns (UpdateAddressResponse);
+
+    rpc DeleteAddress(DeleteAddressRequest) returns (DeleteAddressResponse);
+}

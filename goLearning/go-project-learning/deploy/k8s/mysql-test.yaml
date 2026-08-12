@@ -1,0 +1,135 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mysql-init-sql
+  namespace: go-project-test
+data:
+  # key 是文件名，value 是 SQL 内容
+  01-member-levels.sql: |
+    CREATE TABLE IF NOT EXISTS `member_levels` (
+        `id`          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        `created_at`  DATETIME(3) DEFAULT NULL,
+        `updated_at`  DATETIME(3) DEFAULT NULL,
+        `deleted_at`  DATETIME(3) DEFAULT NULL,
+        `level_name`  VARCHAR(20)  NOT NULL,
+        `level_value` INT          NOT NULL,
+        `min_growth`  INT          NOT NULL DEFAULT 0,
+        `max_growth`  INT          NOT NULL DEFAULT 0,
+        `discount`    DECIMAL(3,2) NOT NULL DEFAULT 1.00,
+        `icon`        VARCHAR(255) DEFAULT '',
+        `description` VARCHAR(500) DEFAULT '',
+        `status`      TINYINT      NOT NULL DEFAULT 1,
+        UNIQUE KEY `idx_level_value` (`level_value`),
+        INDEX `idx_deleted_at` (`deleted_at`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+    INSERT INTO member_levels (level_name, level_value, min_growth, max_growth, discount, icon, description, status, created_at, updated_at)
+    VALUES ('普通会员', 0, 0, 999, 1.00, 'icon_normal', '注册即享，基础购物权益', 1, NOW(), NOW())
+    ON DUPLICATE KEY UPDATE level_name='普通会员', min_growth=0, max_growth=999, discount=1.00, updated_at=NOW();
+
+    INSERT INTO member_levels (level_name, level_value, min_growth, max_growth, discount, icon, description, status, created_at, updated_at)
+    VALUES ('银卡会员', 1, 1000, 4999, 0.98, 'icon_silver', '满1000成长值自动升级，享98折+包邮券', 1, NOW(), NOW())
+    ON DUPLICATE KEY UPDATE level_name='银卡会员', min_growth=1000, max_growth=4999, discount=0.98, updated_at=NOW();
+
+    INSERT INTO member_levels (level_name, level_value, min_growth, max_growth, discount, icon, description, status, created_at, updated_at)
+    VALUES ('金卡会员', 2, 5000, 19999, 0.95, 'icon_gold', '满5000成长值自动升级，享95折+专属折扣', 1, NOW(), NOW())
+    ON DUPLICATE KEY UPDATE level_name='金卡会员', min_growth=5000, max_growth=19999, discount=0.95, updated_at=NOW();
+
+    INSERT INTO member_levels (level_name, level_value, min_growth, max_growth, discount, icon, description, status, created_at, updated_at)
+    VALUES ('钻石会员', 3, 20000, -1, 0.90, 'icon_diamond', '满20000成长值自动升级，享9折+专属客服+优先发货', 1, NOW(), NOW())
+    ON DUPLICATE KEY UPDATE level_name='钻石会员', min_growth=20000, max_growth=-1, discount=0.90, updated_at=NOW();
+  02-coupon.sql: |
+    CREATE TABLE IF NOT EXISTS `coupon_templates` (
+        `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        `created_at` DATETIME(3) DEFAULT NULL,
+        `updated_at` DATETIME(3) DEFAULT NULL,
+        `deleted_at` DATETIME(3) DEFAULT NULL,
+        `name` VARCHAR(50) NOT NULL COMMENT '优惠券名称',
+        `type` TINYINT NOT NULL DEFAULT 1 COMMENT '类型：1=满减券 2=折扣券 3=无门槛券',
+        `discount_amount` DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT '优惠金额或折扣率',
+        `min_amount` DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT '最低消费金额',
+        `start_time` DATETIME(3) NOT NULL COMMENT '有效期开始',
+        `end_time` DATETIME(3) NOT NULL COMMENT '有效期结束',
+        `total_count` INT NOT NULL DEFAULT -1 COMMENT '发放总量，-1=无限制',
+        `claimed_count` INT NOT NULL DEFAULT 0 COMMENT '已领取数量',
+        `per_user_limit` INT NOT NULL DEFAULT 1 COMMENT '每人限领数量',
+        `status` TINYINT NOT NULL DEFAULT 1 COMMENT '状态：1=启用 0=禁用',
+        PRIMARY KEY (`id`),
+        INDEX `idx_coupon_templates_deleted_at` (`deleted_at`),
+        INDEX `idx_coupon_templates_status` (`status`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='优惠券模板表';
+
+    INSERT INTO coupon_templates (name, type, discount_amount, min_amount, start_time, end_time, total_count, claimed_count, per_user_limit, status, created_at, updated_at, deleted_at) VALUES
+    ('满100减10', 1, 10.00, 100.00, '2026-01-01 00:00:00', '2026-12-31 23:59:59', 100, 0, 1, 1, NOW(), NOW(), NULL),
+    ('满200减30', 1, 30.00, 200.00, '2026-01-01 00:00:00', '2026-12-31 23:59:59', 50, 0, 2, 1, NOW(), NOW(), NULL),
+    ('满500减80', 1, 80.00, 500.00, '2026-01-01 00:00:00', '2026-12-31 23:59:59', 30, 0, 1, 1, NOW(), NOW(), NULL);
+
+    INSERT INTO coupon_templates (name, type, discount_amount, min_amount, start_time, end_time, total_count, claimed_count, per_user_limit, status, created_at, updated_at, deleted_at) VALUES
+    ('85折优惠券', 2, 0.85, 0.00, '2026-01-01 00:00:00', '2026-12-31 23:59:59', -1, 0, 3, 1, NOW(), NOW(), NULL),
+    ('9折优惠券', 2, 0.90, 100.00, '2026-01-01 00:00:00', '2026-12-31 23:59:59', 200, 0, 2, 1, NOW(), NOW(), NULL);
+
+    INSERT INTO coupon_templates (name, type, discount_amount, min_amount, start_time, end_time, total_count, claimed_count, per_user_limit, status, created_at, updated_at, deleted_at) VALUES
+    ('无门槛5元券', 3, 5.00, 0.00, '2026-01-01 00:00:00', '2026-12-31 23:59:59', 200, 0, 1, 1, NOW(), NOW(), NULL),
+    ('无门槛10元券', 3, 10.00, 0.00, '2026-01-01 00:00:00', '2026-12-31 23:59:59', 100, 0, 1, 1, NOW(), NOW(), NULL);
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql
+  namespace: go-project-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysql
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      containers:
+        - name: mysql
+          image: mysql:8.0
+          ports:
+            - containerPort: 3306
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secret
+                  key: mysql-root-password
+            - name: MYSQL_DATABASE
+              value: userdb_test
+          volumeMounts:
+            - name: mysql-storage
+              mountPath: /var/lib/mysql
+            # 挂载初始化 SQL 目录
+            - name: mysql-init
+              mountPath: /docker-entrypoint-initdb.d
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "1000m"
+      volumes:
+        - name: mysql-storage
+          emptyDir: {}
+        # 引用 ConfigMap 作为 Volume
+        - name: mysql-init
+          configMap:
+            name: mysql-init-sql
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-svc
+  namespace: go-project-test
+spec:
+  selector:
+    app: mysql
+  ports:
+    - port: 3306
+      targetPort: 3306
+  type: ClusterIP

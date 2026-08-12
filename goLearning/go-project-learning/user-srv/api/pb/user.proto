@@ -1,0 +1,141 @@
+// 1. 必须第一行：声明使用 proto3 语法
+syntax = "proto3";
+
+// 2. 包名：防止命名冲突（企业规范：服务名.版本）
+package user.v1;
+
+// 3. 核心！生成 Go 代码的配置
+// 格式：go_package = "生成的Go文件路径;包名"
+option go_package = "./api/pb;pb";
+
+// ------------------------------
+// 4. 定义【用户数据结构】= Go 结构体
+// ------------------------------
+message User {
+  int64 id = 1;       // 用户ID
+  string name = 2;    // 用户名
+  string phone = 3;      // 年龄
+  string email = 4;   // 邮箱
+  bool is_active = 5; // 是否激活
+}
+
+// ------------------------------
+// 5. 定义【接口请求/响应结构体】
+// ------------------------------
+
+// 获取用户请求
+message GetUserRequest {
+  int64 id = 1; // 只传用户ID
+}
+
+// 获取用户响应
+message GetUserResponse {
+  int32 code = 1;    // 状态码：0=成功
+  string msg = 2;    // 提示信息
+  User data = 3;     // 用户数据
+}
+
+// 创建用户请求
+message CreateUserRequest {
+  string name = 1;
+  string password = 2;
+  string phone = 3;
+  string email = 4;
+}
+
+// 创建用户响应
+message CreateUserResponse {
+  int32 code = 1;
+  string msg = 2;
+  User data = 3;
+}
+
+// 更新用户请求
+message UpdateUserRequest {
+  int64 id = 1;
+  string name = 2;
+  string phone = 3;
+  string email = 4;
+}
+
+// 更新用户响应
+message UpdateUserResponse {
+  int32 code = 1;
+  string msg = 2;
+  User data = 3;
+}
+
+// 用户列表请求
+message ListUserRequest {
+  int32 page = 1;    // 页码
+  int32 size = 2;    // 每页条数
+}
+
+// 用户列表响应
+message ListUserResponse {
+  int32 code = 1;
+  string msg = 2;
+  repeated User data = 3; // 列表 = 切片
+}
+
+message SendCodeRequest {
+  string phone = 1;
+}
+
+message SendCodeResponse {
+  int32 code = 1;
+  string msg = 2;
+}
+
+message PhoneLoginRequest {
+  string code = 1;
+  string phone = 2;
+}
+
+message EmailLoginRequest {
+  string email = 1;
+  string password = 2;
+}
+
+message PwdLoginRequest {
+  string account = 1;
+  string password = 2;
+}
+
+message LoginResponse {
+  int32 code = 1;
+  string msg = 2;
+  string access_token = 3;
+  string refresh_token = 4;
+  int64 expires_at = 5;
+  User user = 6;
+}
+
+// ------------------------------
+// 6. 定义【用户服务接口】
+// ------------------------------
+service UserService {
+  // 获取用户
+  rpc GetUser(GetUserRequest) returns (GetUserResponse);
+
+  // 创建用户
+  rpc CreateUser(CreateUserRequest) returns (CreateUserResponse);
+
+  // 更新用户
+  rpc UpdateUser(UpdateUserRequest) returns (UpdateUserResponse);
+
+  // 获取用户列表
+  rpc ListUser(ListUserRequest) returns (ListUserResponse);
+
+  // 发送验证码
+  rpc SendCode(SendCodeRequest) returns (SendCodeResponse);
+
+  // 手机验证码登录
+  rpc PhoneLogin(PhoneLoginRequest) returns (LoginResponse);
+
+  // 邮箱密码登录
+  rpc EmailLogin(EmailLoginRequest) returns (LoginResponse);
+
+  // 用户名密码登录
+  rpc PwdLogin(PwdLoginRequest) returns (LoginResponse);
+}

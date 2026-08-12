@@ -1,0 +1,11 @@
+go 1.26.4
+
+use (
+	./common
+	./gateway-api
+	./order-srv
+	./pay-srv
+	./product-srv
+	./promotion-srv
+	./user-srv
+)

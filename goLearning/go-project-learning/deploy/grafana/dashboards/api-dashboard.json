@@ -1,0 +1,127 @@
+{
+  "dashboard": {
+    "title": "Go 微服务 API 监控",
+    "description": "gateway-api + user-srv 核心指标面板：QPS、延迟、在线用户、错误率",
+    "tags": ["go", "api", "prometheus"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "HTTP QPS（每秒请求数）",
+        "type": "graph",
+        "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+        "targets": [
+          {
+            "expr": "sum(rate(app_http_requests_total[1m])) by (path)",
+            "legendFormat": "{{path}}",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [{ "format": "reqps", "label": "请求/秒" }],
+        "description": "按 API 路径分组的 QPS。rate() 计算每秒增长率，sum() 跨实例聚合（多副本场景）"
+      },
+      {
+        "id": 2,
+        "title": "HTTP 错误率（5xx + 4xx）",
+        "type": "graph",
+        "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+        "targets": [
+          {
+            "expr": "sum(rate(app_http_requests_total{status=~\"5..|4..\"}[1m])) / sum(rate(app_http_requests_total[1m])) * 100",
+            "legendFormat": "错误率 %",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [{ "format": "percent", "label": "错误率", "max": 100 }],
+        "thresholds": [{ "value": 5, "color": "red", "label": ">5% 告警" }],
+        "description": "4xx + 5xx 占比。面试话术：SLO 通常定义错误率 < 1%（99% 可用性），超过 5% 必须告警"
+      },
+      {
+        "id": 3,
+        "title": "P50 / P90 / P99 请求延迟",
+        "type": "graph",
+        "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, sum(rate(app_http_request_duration_seconds_bucket[1m])) by (le, path))",
+            "legendFormat": "P50 - {{path}}",
+            "refId": "A"
+          },
+          {
+            "expr": "histogram_quantile(0.90, sum(rate(app_http_request_duration_seconds_bucket[1m])) by (le, path))",
+            "legendFormat": "P90 - {{path}}",
+            "refId": "B"
+          },
+          {
+            "expr": "histogram_quantile(0.99, sum(rate(app_http_request_duration_seconds_bucket[1m])) by (le, path))",
+            "legendFormat": "P99 - {{path}}",
+            "refId": "C"
+          }
+        ],
+        "yaxes": [{ "format": "s", "label": "延迟（秒）" }],
+        "description": "histogram_quantile() 从桶分布反推分位数。面试常考：为什么 P50 和 P99 差那么多？→ 长尾效应（少数慢请求拉高 P99）"
+      },
+      {
+        "id": 4,
+        "title": "gRPC QPS（按方法分组）",
+        "type": "graph",
+        "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+        "targets": [
+          {
+            "expr": "sum(rate(app_grpc_requests_total[1m])) by (method)",
+            "legendFormat": "{{method}}",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [{ "format": "reqps", "label": "请求/秒" }],
+        "description": "按 gRPC 方法分组的 QPS。一眼看出哪个接口最热"
+      },
+      {
+        "id": 5,
+        "title": "当前在线用户数",
+        "type": "stat",
+        "gridPos": { "x": 0, "y": 16, "w": 6, "h": 4 },
+        "targets": [
+          {
+            "expr": "app_online_users_current",
+            "refId": "A"
+          }
+        ],
+        "format": "none",
+        "description": "Gauge 类型——登录+1，登出-1，实时反映当前状态"
+      },
+      {
+        "id": 6,
+        "title": "gRPC 调用延迟 P99",
+        "type": "graph",
+        "gridPos": { "x": 6, "y": 16, "w": 12, "h": 8 },
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.99, sum(rate(app_grpc_request_duration_seconds_bucket[1m])) by (le, method))",
+            "legendFormat": "P99 - {{method}}",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [{ "format": "s", "label": "延迟（秒）" }],
+        "description": "gRPC 调用的 P99 延迟。如果 >1s，说明 user-srv 内部有性能瓶颈"
+      },
+      {
+        "id": 7,
+        "title": "gRPC 错误率（非 OK 状态）",
+        "type": "graph",
+        "gridPos": { "x": 18, "y": 16, "w": 6, "h": 8 },
+        "targets": [
+          {
+            "expr": "sum(rate(app_grpc_requests_total{status!=\"OK\"}[1m])) / sum(rate(app_grpc_requests_total[1m])) * 100",
+            "legendFormat": "gRPC 错误率 %",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [{ "format": "percent", "label": "错误率", "max": 100 }],
+        "description": "gRPC 非 OK（Internal/Unavailable/DeadlineExceeded...）占比"
+      }
+    ],
+    "schemaVersion": 27,
+    "version": 0
+  }
+}

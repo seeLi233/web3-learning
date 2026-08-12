@@ -1,0 +1,100 @@
+# ===================================================================
+# 多阶段构建：user-srv（用户服务 — gRPC + Prometheus Metrics）
+#
+# 阶段 1 (builder)：编译 Go 源码（含 protobuf 生成代码）
+# 阶段 2 (runtime)：alpine + 二进制 + 配置 → ~25MB
+#
+# 和 gateway-api 的区别：
+# - user-srv 是 gRPC 服务（端口 50051），gateway-api 是 HTTP（8080）
+# - user-srv 暴露 /metrics 给 Prometheus 抓取（端口 8082，Day 47 加的）
+# - user-srv 分层引用 common/ 的 proto 定义
+# ===================================================================
+
+# ==================== 阶段 1：编译 (Builder) ====================
+
+# 为什么用 golang:1.26-alpine 而不是 golang:1.26（Debian 版）？
+# → alpine 版 ~80MB，Debian 版 ~800MB；多阶段构建只用它编译，不关心运行时体积
+#    但 alpine 版的 Docker pull 速度快 10 倍——每次 CI 构建都要拉镜像
+FROM golang:1.26-alpine AS builder
+
+# ARG：构建时参数，允许覆盖 Go 代理
+# 用法：docker build --build-arg GOPROXY=https://goproxy.cn,direct -f deploy/Dockerfile.user-srv .
+ARG GOPROXY=https://proxy.golang.org,direct
+
+# 为什么还要 protoc（protobuf 编译器）？
+# → 如果 proto 文件的生成代码（.pb.go）没有提交到 git，
+#   需要在 Docker 构建时重新生成。大多数团队提交 .pb.go 到仓库，
+#   所以 protoc 实际很少在 Docker 构建时用到——但保留以防万一
+#   protobuf-dev 包 = protoc + protoc-gen-go + protoc-gen-go-grpc
+
+RUN apk add --no-cache git ca-certificates
+
+WORKDIR /app
+
+# ===== 依赖缓存层 =====
+# 为什么先复制 go.mod/go.sum？
+# → 和 gateway-api 一样：利用 Docker 层缓存，go.mod 没变就不重新下载依赖
+#   user-srv 依赖 common/（共享 proto 定义 + 工具库），所以要一起复制
+COPY common/go.mod common/go.sum ./common/
+COPY user-srv/go.mod user-srv/go.sum ./user-srv/
+
+# 下载依赖
+WORKDIR /app/user-srv
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    GOPROXY=${GOPROXY} CGO_ENABLED=0 GOOS=linux go mod download
+
+# 复制源码
+WORKDIR /app
+COPY common/ ./common/
+COPY user-srv/ ./user-srv/
+
+# 编译
+WORKDIR /app/user-srv
+
+# 编译参数详解：
+# CGO_ENABLED=0    → 纯静态编译，不依赖 glibc，可在 Alpine (musl) 上运行
+#                     Go 的 net 包默认用 C 的 DNS 解析器；CGO_ENABLED=0 强制用纯 Go 实现
+# GOOS=linux       → 目标系统。Windows 宿主机交叉编译 Linux 二进制
+# -ldflags="-s -w" →
+#   -s：去掉符号表（panic stack trace 看不到函数名，但镜像小 ~20%）
+#   -w：去掉 DWARF 调试信息（不能 dlv attach，但不需要）
+#   为什么 user-srv 也适用？生产环境排查靠日志 + metrics + tracing，不靠 dlv 远程调试
+# -o user-srv      → 输出文件名
+# ./cmd/main.go    → user-srv 入口比其他服务简单（monorepo 内只有一个 main）
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux \
+    go build -ldflags="-s -w" -o user-srv ./cmd/main.go
+
+# ==================== 阶段 2：运行 (Runtime) ====================
+
+# 为什么和 gateway-api 一样也用 alpine 而不是 scratch？
+# → user-srv 需要：
+#   1. ca-certificates：连接 MySQL（TLS）、Redis（TLS）时验证证书
+#   2. tzdata：数据库时间字段、日志时间
+#   3. /etc/passwd：非 root 用户运行
+#   scratch 缺少以上所有，所以选 alpine（~7MB）
+FROM alpine:latest
+
+# ca-certificates：验证 MySQL TLS 连接（如果开启了 require_ssl）
+# tzdata：确保时间戳正确
+RUN apk add --no-cache ca-certificates tzdata
+
+# ca-certificates：验证 MySQL TLS 连接（如果开启了 require_ssl）
+# tzdata：确保时间戳正确
+ENV TZ=Asia/Shanghai
+
+WORKDIR /app
+
+# 从构建阶段复制二进制
+COPY --from=builder /app/user-srv/user-srv .
+# 复制配置文件
+# COPY user-srv/configs/ ./configs/
+
+# EXPOSE 不实际发布端口（发布靠 docker-compose.yml 的 ports:），
+# 这里是给读 Dockerfile 的人看的文档化声明
+EXPOSE 50051    
+EXPOSE 8082
+
+# 为什么用 CMD 而不是 ENTRYPOINT？
+# → 和 gateway-api 一样：CMD 允许 docker run ... /bin/sh 覆盖命令进去调试
+CMD ["./user-srv"]

@@ -1,0 +1,16 @@
+# ============================================================
+# Prometheus 抓取配置（本地 Docker 开发用）
+# K8s 部署请使用 deploy/k8s/prometheus-test.yaml
+# ============================================================
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "gateway-api"
+    scrape_interval: 5s
+    static_configs:
+      - targets: ["host.docker.internal:8080"]
+        labels:
+          service: "gateway-api"
+          env: "dev"

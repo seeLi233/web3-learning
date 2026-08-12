@@ -1,0 +1,35 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gateway-ingress
+  namespace: go-project-test
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - mall.test-domain.com
+        - admin.test-domain.com
+      secretName: your-tls-secret  # TLS 证书 Secret
+  rules:
+    - host: mall.test-domain.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway-api-svc
+                port:
+                  number: 8080
+    - host: admin.test-domain.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway-api-svc
+                port:
+                  number: 8080

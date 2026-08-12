@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: consul
+  namespace: go-project-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: consul
+  template:
+    metadata:
+      labels:
+        app: consul
+    spec:
+      containers:
+        - name: consul
+          image: hashicorp/consul:latest
+          # 为什么不用 Never？→ CI/CD 环境中镜像来自 Registry，本地没有
+          # IfNotPresent: 本地有就用本地，没有就拉 → 兼顾本地开发和 CI/CD
+          imagePullPolicy: IfNotPresent
+          args: ["agent", "-dev", "-client=0.0.0.0"]
+          ports:
+            - containerPort: 8500
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: consul-svc
+  namespace: go-project-test
+spec:
+  selector:
+    app: consul
+  ports:
+    - port: 8500
+      targetPort: 8500
+  type: ClusterIP

@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: consul
+  namespace: go-project
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: consul
+  template:
+    metadata:
+      labels:
+        app: consul
+    spec:
+      containers:
+        - name: consul
+          image: hashicorp/consul:latest
+          ports:
+            - containerPort: 8500
+          args: ["agent", "-dev", "-client=0.0.0.0"]
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: consul-svc
+  namespace: go-project
+spec:
+  selector:
+    app: consul
+  ports:
+    - port: 8500
+      targetPort: 8500
+  type: ClusterIP
