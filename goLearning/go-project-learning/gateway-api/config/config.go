@@ -10,11 +10,11 @@ import (
 )
 
 type AppConfig struct {
-	Server  ServerConfig      `mapstructure:"server"`
-	UserSrv UserSrvConfig     `mapstructure:"user_srv"`
+	Server  ServerConfig       `mapstructure:"server"`
+	UserSrv UserSrvConfig      `mapstructure:"user_srv"`
 	Redis   config.RedisConfig `mapstructure:"redis"`
-	JWT     JWTConfig         `mapstructure:"jwt"`
-	GitHub  GitHubConfig      `mapstructure:"github"`
+	JWT     JWTConfig          `mapstructure:"jwt"`
+	GitHub  GitHubConfig       `mapstructure:"github"`
 }
 
 type ServerConfig struct {

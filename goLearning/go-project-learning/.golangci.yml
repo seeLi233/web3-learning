@@ -1,0 +1,50 @@
+# ============ golangci-lint 配置 ============
+# 文档: https://golangci-lint.run/usage/configuration/
+
+run:
+  timeout: 3m
+  go: "1.24"
+
+linters:
+  # 显式禁用 errcheck：golangci-lint 默认启用一批 linter，
+  # errcheck 在其中。当前项目有 20+ 处未检查错误返回值需要修复
+  # TODO: 修复后删除这行
+  disable:
+    - errcheck
+  enable:
+    - govet         # Go 官方静态分析
+    - staticcheck   # 深度静态分析
+    - unused        # 未使用的变量/函数/import
+    - gosimple      # 代码简化建议
+    - ineffassign   # 无效赋值（在赋值后立刻被覆盖）→ 通常是 bug
+    - typecheck     # 类型检查
+    - gofmt         # 格式检查
+
+# ============ 排除规则 ============
+
+issues:
+  exclude-rules:
+    # 测试文件：允许不检查错误返回值
+    - path: _test\.go
+      linters:
+        - errcheck
+    # demo/pkg 目录：学习和实验代码
+    - path: pkg/demo/
+      linters:
+        - unused
+        - govet
+        - staticcheck
+
+linters-settings:
+  govet:
+    # 为什么禁用 fieldalignment 和 shadow？
+    # → fieldalignment: 建议优化 struct 字段顺序以节省内存（对学习项目过早优化）
+    # → shadow: 变量遮蔽在 Go 中是惯用写法（短变量声明 if v, err := ...）
+    disable:
+      - fieldalignment
+      - shadow
+  gocritic:
+    # gocritic 未在 linters.enable 列表中显式启用，默认不运行
+    # 仅当 golangci-lint 默认启用时才生效
+    enabled-tags:
+      - diagnostic

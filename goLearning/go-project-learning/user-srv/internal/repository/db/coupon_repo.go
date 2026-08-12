@@ -208,8 +208,8 @@ func (r *CouponRepo) UseCoupon(ctx context.Context, couponID, userID uint, order
 	result := r.db.WithContext(ctx).Model(&entity.UserCoupon{}).
 		Where("id = ? AND user_id = ? AND status = ?", couponID, userID, 1).
 		Updates(map[string]interface{}{
-			"status":  2,
-			"used_at": now,
+			"status":   2,
+			"used_at":  now,
 			"order_id": orderID,
 		})
 

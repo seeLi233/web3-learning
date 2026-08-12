@@ -99,7 +99,7 @@ func main() {
 	}
 
 	// 拆分 IP 和 端口
-	ip, portStr, err := net.SplitHostPort(podID + ":50051")
+	ip, portStr, _ := net.SplitHostPort(podID + ":50051")
 
 	port, err := strconv.Atoi(portStr)
 	if err != nil {

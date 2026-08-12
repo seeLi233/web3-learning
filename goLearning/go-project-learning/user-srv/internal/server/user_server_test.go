@@ -41,17 +41,18 @@ import (
 const bufSize = 1024 * 1024 // 1MB 缓冲区
 
 var (
-	testLis     *bufconn.Listener // 内存监听器，替代 TCP net.Listen
-	testClient  pb.UserServiceClient
-	testUserRepo *db.UserRepo    // 仓库实例，供测试用例查询用
-	testCleanup []func()         // 测试结束后执行的清理函数列表
+	testLis      *bufconn.Listener // 内存监听器，替代 TCP net.Listen
+	testClient   pb.UserServiceClient
+	testUserRepo *db.UserRepo // 仓库实例，供测试用例查询用
+	testCleanup  []func()     // 测试结束后执行的清理函数列表
 )
 
 // cleanupUser 生成一个清理函数，用于测试结束后删除测试用户
 //
 // 为什么返回 func() 而不是直接执行？
 // -> 这样可以把清理函数注册到 testCleanup 列表，
-//    TestMain 在所有测试跑完后统一执行清理
+//
+//	TestMain 在所有测试跑完后统一执行清理
 func cleanupUser(phone string) func() {
 	return func() {
 		database.DB.Unscoped().Where("phone = ?", phone).Delete(&entity.User{})
@@ -62,7 +63,8 @@ func cleanupUser(phone string) func() {
 //
 // 为什么用 TestMain 而不是 init()？
 // -> init() 在包加载时自动执行，你无法控制顺序，也无法做 teardown
-//    TestMain 让你显式控制：setup -> run tests -> teardown
+//
+//	TestMain 让你显式控制：setup -> run tests -> teardown
 func TestMain(m *testing.M) {
 	// ====== Setup：初始化所有依赖 ======
 

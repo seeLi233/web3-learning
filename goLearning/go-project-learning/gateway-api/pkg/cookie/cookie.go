@@ -29,8 +29,8 @@ func ClearCookie(c *gin.Context, name string) {
 	cfg := config.Conf.JWT
 	c.SetCookie(
 		name,
-		"",    // value 置空
-		-1,    // maxAge -1 表立删除
+		"", // value 置空
+		-1, // maxAge -1 表立删除
 		cfg.CookiePath,
 		cfg.CookieDomain,
 		cfg.CookieSecure,

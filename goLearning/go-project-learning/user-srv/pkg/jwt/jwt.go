@@ -51,7 +51,7 @@ func GenerateToken(userID uint, username, phone string) (string, string, int64, 
 		},
 	}
 	refreshToken := jwt.NewWithClaims(jwt.SigningMethodHS256, refreshClaims)
-	refreshStr, err := refreshToken.SignedString([]byte(cfg.Secret))
+	refreshStr, _ := refreshToken.SignedString([]byte(cfg.Secret))
 
 	return accessStr, refreshStr, expiresAt.Unix(), nil
 }
