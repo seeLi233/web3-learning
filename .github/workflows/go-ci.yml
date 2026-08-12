@@ -14,13 +14,8 @@ name: Go CI
 on:
     push:
         branches: [main]
-        # 只在 Go 项目目录有变更时才触发，避免 Solidity 项目改动浪费 Go CI 分钟数
-        paths:
-            - "goLearning/go-project-learning/**"
     pull_request:
         branches: [main]
-        paths:
-            - "goLearning/go-project-learning/**"
 
 # ============ 环境变量 ============
 
