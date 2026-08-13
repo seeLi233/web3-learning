@@ -50,6 +50,11 @@ func Init() {
 	viper.SetConfigName("config." + env)
 	viper.SetConfigType("yaml")
 
+	// 开启环境变量自动覆盖 + 显式绑定敏感配置（K8s Secret 通过 JWT_SECRET 等环境变量注入）
+	// 注意：AutomaticEnv 对 Unmarshal 的覆盖不可靠，敏感配置必须用 BindEnv 显式绑定
+	viper.AutomaticEnv()
+	_ = viper.BindEnv("jwt.secret", "JWT_SECRET")
+
 	if err := viper.ReadInConfig(); err != nil {
 		log.Fatalf("读取配置失败: %v", err)
 	}

@@ -107,9 +107,10 @@ func Init() {
 
 	// 3.开启[环境变量自动覆盖]
 	viper.AutomaticEnv()
-	// 映射自定环境变量名绑定配置字段
-	// _ = viper.BindEnv("app.port", "APP_PORT")
-	// _ = viper.BindEnv("mysql.pwd", "MYSQL_PWD")
+	// 显式绑定敏感配置（K8s Secret 通过环境变量注入，覆盖 ConfigMap 里的空值占位）
+	// 注意：AutomaticEnv 对 Unmarshal 的覆盖不可靠，必须用 BindEnv 显式绑定
+	_ = viper.BindEnv("mysql.password", "MYSQL_PASSWORD")
+	_ = viper.BindEnv("jwt.secret", "JWT_SECRET")
 
 	// 4.读取配置文件
 	if err := viper.ReadInConfig(); err != nil {

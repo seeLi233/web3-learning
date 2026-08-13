@@ -61,6 +61,33 @@ spec:
               name: grpc
             - containerPort: 8082
               name: metrics
+          # ============ 健康检查 ============
+          # 为什么 user-srv 用 tcpSocket 而不是 httpGet？
+          # → user-srv 是 gRPC 服务（50051），没有 HTTP 接口可供 httpGet 探测
+          #    最标准的做法是实现 gRPC Health Protocol (grpc_health_v1)，
+          #    但项目里没集成，所以用 tcpSocket 探测"端口是否可连接"作为简化方案
+          # 作用：K8s 定期尝试连 50051 端口，连不上就判定服务异常
+          livenessProbe:
+            tcpSocket:
+              port: 50051     # 探测 gRPC 端口
+            # 为什么 initialDelaySeconds 要 30 秒而不是 5 秒？
+            # → user-srv 启动时要连 Consul + MySQL + Redis + 加载风控配置，链路长
+            #    如果 5 秒就开始探测，服务还没起来就被误判为"死"→ 疯狂重启 CrashLoopBackOff
+            initialDelaySeconds: 30 # 启动后等 30 秒再开始探测
+            periodSeconds: 10       # 之后每 10 秒探测一次
+            timeoutSeconds: 3       # 单次 3 秒连不上算失败
+            failureThreshold: 3     # 连续失败 3 次才判定"死"，触发重启（避免网络抖动误杀）
+          readinessProbe:
+            tcpSocket:
+              port: 50051
+            # 为什么 readiness 的 initialDelay 比 liveness 短（20 vs 30）？
+            # → readiness 只是"摘除流量"，失败后果轻，可以更早开始探测
+            #    而 liveness 失败会"重启容器"，后果重，要更保守（更长的延迟）
+            initialDelaySeconds: 20 # 启动后等 20 秒开始探测就绪
+            periodSeconds: 5       # 就绪探测更频繁（5 秒），因为要尽快恢复接流量
+            timeoutSeconds: 3
+            failureThreshold: 3    # 连续 3 次失败 → 从 Service 摘除，不转发流量
+            successThreshold: 1    # 成功 1 次就恢复接流量（readiness 专属字段）
           env:
             - name: ENV
               value: "test"

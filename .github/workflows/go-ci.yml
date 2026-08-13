@@ -14,8 +14,12 @@ name: Go CI
 on:
     push:
         branches: [main]
+        paths:
+            - "goLearning/go-project-learning/**"
     pull_request:
         branches: [main]
+        paths:
+            - "goLearning/go-project-learning/**"
 
 # ============ 环境变量 ============
 
@@ -44,7 +48,7 @@ jobs:
             #    本地升级 Go 版本后 CI 自动跟进，不用手动改 YAML
             - uses: actions/setup-go@v5
               with:
-                go-version: "1.24"
+                go-version-file: goLearning/go-project-learning/go.work
 
             # ============ Step 3: Lint ============
 
@@ -63,7 +67,8 @@ jobs:
                 # → Go workspace 模式下 ./... 只匹配包含模块的目录
                 #    go.work 里的模块都是子目录，./... 会报 "does not contain modules"
                 #    必须逐个列出模块路径
-                args: ./common/... ./gateway-api/... ./user-srv/... ./order-srv/... ./pay-srv/... ./product-srv/... ./promotion-srv/...
+                # 注意：order-srv/pay-srv/product-srv/promotion-srv 尚未实现（空骨架 main.go），暂不纳入 lint
+                args: ./common/... ./gateway-api/... ./user-srv/...
 
             # ============ Step 4: 运行测试 ============
 
@@ -73,7 +78,8 @@ jobs:
             # 为什么 -count=1 禁用测试缓存？
             # → CI 的职责是"每次从头验证"
             - name: Run tests
-              run: go test ./common/... ./gateway-api/... ./user-srv/... ./order-srv/... ./pay-srv/... ./product-srv/... ./promotion-srv/... -v -count=1 -coverprofile=coverage.out
+              # order/pay/product/promotion 未实现（空骨架 main.go），暂不纳入测试
+              run: go test ./common/... ./gateway-api/... ./user-srv/... -v -count=1 -coverprofile=coverage.out
 
             # ============ Step 5: 上传覆盖率文件 ============
 

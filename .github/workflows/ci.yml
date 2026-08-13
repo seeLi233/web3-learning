@@ -8,8 +8,12 @@ name: CI
 on:
   push:
     branches: [main]        # 推送到 main 分支时触发
+    paths:
+      - "DeFiAggregator/**"  # 只有 DeFiAggregator 目录变更才触发，与 Go CI 隔离
   pull_request:
     branches: [main]        # 创建指向 main 的 PR 时触发
+    paths:
+      - "DeFiAggregator/**"  # 只有 DeFiAggregator 目录变更才触发，与 Go CI 隔离
 
 jobs:
   # ──────────────────────────────────────────

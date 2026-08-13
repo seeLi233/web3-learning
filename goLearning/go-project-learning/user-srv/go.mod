@@ -1,6 +1,6 @@
 module github.com/go-project-learning/project/user-srv
 
-go 1.24
+go 1.26
 
 require (
 	github.com/go-project-learning/project/common v0.0.0-00010101000000-000000000000
@@ -14,7 +14,6 @@ require (
 	google.golang.org/grpc v1.81.1
 	google.golang.org/protobuf v1.36.11
 	gorm.io/gorm v1.31.1
-// 以下根据实际 import 按需添加，go mod tidy 会自动补
 )
 
 require (

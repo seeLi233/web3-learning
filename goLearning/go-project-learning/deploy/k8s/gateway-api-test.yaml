@@ -10,6 +10,12 @@ data:
     user_srv:
       host: user-srv
       port: 50051
+    redis:
+      host: redis-svc
+      port: 6379
+      db: 0
+      password: ""
+      pool_size: 10
     jwt:
       secret: ""
       cookie_domain: ".test-domain.com"
@@ -41,6 +47,22 @@ spec:
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
+          # ============ 健康检查 ============
+          # 为什么 gateway 用 httpGet 而 user-srv 用 tcpSocket？
+          # → gateway 是 HTTP 服务（Gin 8080），有 /metrics 端点能返回 200 状态码
+          #    httpGet 比 tcpSocket 强一档：不仅检查端口能连，还检查"应用层能正确响应 HTTP"
+          #    tcpSocket 只能证明"端口开着"，httpGet 能证明"Web 框架真的在正常处理请求"
+          livenessProbe:
+            httpGet:
+              path: /metrics    # 探测路径：Gin 活着就会返回 200
+              port: 8080        # 探测端口（和 containerPort 一致）
+            # 为什么 gateway 的 initialDelaySeconds 只有 15 秒，而 user-srv 是 30 秒？
+            # → gateway 启动快：只是连 Redis + 初始化几个 gRPC 客户端，15 秒足够
+            #    user-srv 要连 Consul+MySQL+Redis+加载风控配置，启动链路更长，所以要 30 秒
+            initialDelaySeconds: 15 # 启动后等 15 秒开始探测
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3     # 连续 3 次失败才重启
           env:
             - name: ENV
               value: "test"
