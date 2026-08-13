@@ -54,24 +54,21 @@ jobs:
 
             # ============ Step 3: Lint ============
 
-            # 为什么用 golangci-lint-action 而不是手动装 golangci-lint？
-            # → 官方 Action 自动管理版本、缓存 lint 结果、格式化 GitHub PR 上的 lint 输出
-            # 作用：扫描代码中的错误、风格问题、潜在 bug
-            - name: golangci-lint
-              uses: golangci/golangci-lint-action@v6
-              with:
-                # 为什么指定 v1.64.8 而不是 latest？
-                # → golangci-lint v2 改变了配置格式（version:"2", linters.settings 等）
-                #    .golangci.yml 还是 v1 格式，钉住版本避免被 v2 breaking changes 影响
-                # 注意：golangci-lint-action v6 不接受 "v1" 简写，必须写完整版本号 vX.Y.Z
-                version: v1.64.8
-                working-directory: ${{ env.WORK_DIR }}
-                # 为什么显式指定模块目录而不是用 ./...？
-                # → Go workspace 模式下 ./... 只匹配包含模块的目录
-                #    go.work 里的模块都是子目录，./... 会报 "does not contain modules"
-                #    必须逐个列出模块路径
-                # 注意：order-srv/pay-srv/product-srv/promotion-srv 尚未实现（空骨架 main.go），暂不纳入 lint
-                args: ./common/... ./gateway-api/... ./user-srv/...
+            # 为什么用 go install 手动装 golangci-lint 而不是官方 golangci-lint-action？
+            # → 官方 Action 的 working-directory 期望单模块目录（要有 go.sum 用于缓存）
+            #    本项目是 Go workspace（go.work + 多模块），根目录没有 go.sum，
+            #    Action 会报 "file is not found ... Supported file pattern: go.sum"
+            #    go install + run 与本地 `golangci-lint run` 行为完全一致，绕过该限制
+            - name: Install golangci-lint
+              run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+
+            # 为什么显式指定模块目录而不是用 ./...？
+            # → Go workspace 模式下 ./... 只匹配包含模块的目录
+            #    go.work 里的模块都是子目录，./... 会报 "does not contain modules"
+            #    必须逐个列出模块路径
+            # 注意：order-srv/pay-srv/product-srv/promotion-srv 尚未实现（空骨架 main.go），暂不纳入 lint
+            - name: Run golangci-lint
+              run: golangci-lint run ./common/... ./gateway-api/... ./user-srv/...
 
             # ============ Step 4: 运行测试 ============
 
