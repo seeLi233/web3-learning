@@ -13,9 +13,10 @@ on:
     push:
         tags:
             - "v*"
-        # 只在 Go 项目目录有变更时才触发
-        paths:
-            - "goLearning/go-project-learning/**"
+        # 注意：不能在这里加 paths 过滤器！
+        # → GitHub Actions 不评估 tag push 的 paths（paths 对 tag 无效），
+        #    但 paths 会让 main 分支的 push 也误触发（tags + paths 且无 branches 的已知坑）
+        #    tag 本身就代表"要发布版本"，无需再按路径过滤
 
 env:
     REGISTRY: docker.io
@@ -31,9 +32,10 @@ jobs:
             matrix:
                 service:
                     - name: gateway-api
-                      dockerfile: ${{ env.WORK_DIR }}/deploy/Dockerfile.gateway-api
+                      # matrix 里不能用 ${{ env.WORK_DIR }}（matrix 在 env 解析前求值），硬编码路径
+                      dockerfile: goLearning/go-project-learning/deploy/Dockerfile.gateway-api
                     - name: user-srv
-                      dockerfile: ${{ env.WORK_DIR }}/deploy/Dockerfile.user-srv
+                      dockerfile: goLearning/go-project-learning/deploy/Dockerfile.user-srv
 
         # 为什么需要这些权限？
         # → GHCR 推送需要 packages:write，GHA 缓存读写需要 actions:write
