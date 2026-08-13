@@ -5,9 +5,19 @@ import { network } from "hardhat";
 // ⚠️ 关键区别：network.create() 传 "mainnetFork" → 连接主网 Fork
 //    不传参数 → 连接 default 本地空网络
 //    所以这个测试文件的"世界"里，有真实主网的全部状态
-const { ethers } = await network.create("mainnetFork");
 
-describe("🍴 Fork 测试 — 真实主网状态验证", function () {
+// 为什么用 hasRpc 条件跳过？
+// → fork 测试依赖真实主网 RPC（MAINNET_RPC_URL），但 .env 被 gitignore，
+//    CI 上拿不到这个值。没有 RPC 时整个文件跳过（describe.skip），
+//    本地配好 .env 才会真正连主网跑；CI 因此不会因为缺 RPC 而失败。
+const hasRpc = Boolean(process.env.MAINNET_RPC_URL);
+const describeFork = hasRpc ? describe : describe.skip;
+
+const { ethers } = hasRpc
+  ? await network.create("mainnetFork")
+  : await network.create();
+
+describeFork("🍴 Fork 测试 — 真实主网状态验证", function () {
     // ==================== 主网真实合约地址 ====================
     // 为什么写死地址而不是部署 mock？
     // → fork 测试的核心价值就是"和真实合约交互"，这些是 canonical 地址，永久不变
