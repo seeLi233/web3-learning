@@ -1,6 +1,14 @@
 import "dotenv/config";
 import hardhatToolboxMochaEthersPlugin from "@nomicfoundation/hardhat-toolbox-mocha-ethers";
-import { defineConfig } from "hardhat/config";
+import { configVariable, defineConfig } from "hardhat/config";
+
+// 配置取值：优先读 .env（本地），CI 上没有 .env 时回退为 configVariable 占位符。
+// 为什么不能直接写 process.env.X!？
+// → CI 上 .env 被 gitignore，process.env.X 是 undefined，
+//   Hardhat 加载配置时会立即校验失败（要求 URL / 私钥 / Configuration Variable）。
+//   configVariable 返回的是惰性占位符，只在真正联网时才解析，
+//   compile 阶段不联网、不解析，所以 CI 能顺利通过。
+const envOrConfig = (name: string) => process.env[name] ?? configVariable(name);
 
 export default defineConfig({
   plugins: [hardhatToolboxMochaEthersPlugin],
@@ -49,8 +57,8 @@ export default defineConfig({
     sepolia: {
       type: "http",
       chainType: "l1",
-      url: process.env.SEPOLIA_RPC_URL!,
-      accounts: [process.env.SEPOLIA_PRIVATE_KEY!],
+      url: envOrConfig("SEPOLIA_RPC_URL"),
+      accounts: [envOrConfig("SEPOLIA_PRIVATE_KEY")],
     },
     // ============ 新增：主网 Fork 网络 ============
     // 为什么 type 是 "edr-simulated" 而不是 "http"？
@@ -62,7 +70,7 @@ export default defineConfig({
       forking: {
         // 为什么用 process.env 而不是硬编码？
         // → RPC 地址含 API key，不能提交到 git，从 .env 读取
-        url: process.env.MAINNET_RPC_URL!,
+        url: envOrConfig("MAINNET_RPC_URL"),
 
         // 为什么不固定 blockNumber？（默认 fork 最新块）
         // → 固定旧块号需要 archive 归档节点，而免费 Infura 只支持 fork
