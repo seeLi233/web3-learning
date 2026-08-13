@@ -16,10 +16,12 @@ on:
         branches: [main]
         paths:
             - "goLearning/go-project-learning/**"
+            - ".github/workflows/go-ci.yml"
     pull_request:
         branches: [main]
         paths:
             - "goLearning/go-project-learning/**"
+            - ".github/workflows/go-ci.yml"
 
 # ============ 环境变量 ============
 
